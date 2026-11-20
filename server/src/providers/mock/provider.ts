@@ -1,5 +1,6 @@
 import type { Device, Track } from '@shared/types';
 import type { MusicProvider, PlaybackState, SearchResult } from '../types.js';
+import { bestMatch } from '../../lib/tracks.js';
 import { MOCK_CATALOG } from './catalog.js';
 
 const DEVICE: Device = { id: 'mock-speaker', name: 'Demo Speaker', type: 'Speaker', isActive: true };
@@ -58,6 +59,10 @@ export class MockProvider implements MusicProvider {
       return terms.every((term) => haystack.includes(term));
     });
     return { tracks: matches.slice(offset, offset + limit), total: matches.length };
+  }
+
+  async findTrack(title: string, artist: string): Promise<Track | null> {
+    return bestMatch(this.catalog, title, artist);
   }
 
   async getTrack(id: string): Promise<Track | null> {

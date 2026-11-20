@@ -7,16 +7,19 @@ import { getOrCreateSecret, openDb } from './db.js';
 import { buildApp } from './http/app.js';
 import { lanAddress } from './lib/net.js';
 import { MOCK_CATALOG } from './providers/mock/catalog.js';
+import { LastFmSuggestions } from './providers/lastfm.js';
 import { MockProvider } from './providers/mock/provider.js';
+import { MockSuggestions } from './providers/mock/suggestions.js';
 import { SpotifyAuth } from './providers/spotify/auth.js';
 import { SpotifyProvider } from './providers/spotify/provider.js';
-import type { MusicProvider } from './providers/types.js';
+import type { MusicProvider, SuggestionSource } from './providers/types.js';
 import { CooldownService } from './services/cooldowns.js';
 import { GuestService } from './services/guests.js';
 import { HostAuth } from './services/host-auth.js';
 import { Player } from './services/player.js';
 import { QueueService } from './services/queue.js';
 import { StateHub } from './services/state.js';
+import { VoteService } from './services/votes.js';
 
 async function main(): Promise<void> {
   const envFile = path.join(ROOT_DIR, '.env');
@@ -35,14 +38,17 @@ async function main(): Promise<void> {
   }
 
   let provider: MusicProvider;
+  let suggestions: SuggestionSource | null = null;
   let spotifyAuth: SpotifyAuth | null = null;
   if (config.spotify) {
     spotifyAuth = new SpotifyAuth(db, config.spotify.clientId, config.spotify.redirectUri);
     provider = new SpotifyProvider(spotifyAuth);
+    if (config.vote.lastfmApiKey) suggestions = new LastFmSuggestions(config.vote.lastfmApiKey);
   } else {
     // Demo songs are shortened so you can watch the queue move without waiting minutes.
     const catalog = MOCK_CATALOG.map((t) => ({ ...t, durationMs: Math.round(t.durationMs / 4) }));
     provider = new MockProvider({ catalog, startPlaying: true });
+    suggestions = new MockSuggestions(catalog);
   }
 
   const queue = new QueueService(db);
@@ -68,7 +74,16 @@ async function main(): Promise<void> {
       ? { pollMs: 1_000, idlePollMs: 2_000, pushAheadMs: 8_000, autoStartCooldownMs: 5_000 }
       : { pollMs: 3_000, idlePollMs: 5_000, pushAheadMs: 20_000, autoStartCooldownMs: 10_000 },
   );
-  hub = new StateHub({ provider, queue, player, limits: config.limits, demo: config.demo });
+  const votes = new VoteService(
+    { db, provider, source: suggestions, queue, cooldowns, player, log, onChange: () => hub?.broadcast() },
+    {
+      roundMs: config.vote.roundMs,
+      maxWaiting: config.vote.maxWaiting,
+      candidates: 4,
+      retryMs: config.vote.roundMs,
+    },
+  );
+  hub = new StateHub({ provider, queue, player, votes, limits: config.limits, demo: config.demo });
 
   const joinUrl = config.publicUrl ?? `http://${lanAddress()}:${config.uiPort}/`;
   const joinInfo: JoinInfo = {
@@ -87,6 +102,7 @@ async function main(): Promise<void> {
     cooldowns,
     hostAuth,
     player,
+    votes,
     hub,
     joinInfo,
     cookieSecret: getOrCreateSecret(db, 'cookie_secret'),
@@ -97,6 +113,7 @@ async function main(): Promise<void> {
 
   await app.listen({ port: config.port, host: config.host });
   player.start();
+  votes.start();
 
   const adminUrl = `http://127.0.0.1:${config.uiPort}/admin`;
   const qr = await QRCode.toString(joinUrl, { type: 'terminal', small: true });
@@ -121,6 +138,7 @@ async function main(): Promise<void> {
     if (closing) return;
     closing = true;
     player.stop();
+    votes.stop();
     await app.close();
     db.close();
     process.exit(0);

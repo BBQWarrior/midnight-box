@@ -22,6 +22,8 @@ export interface MusicProvider {
   isReady(): boolean;
   search(query: string, offset: number, limit: number): Promise<SearchResult>;
   getTrack(id: string): Promise<Track | null>;
+  /** Looks up a song by title and artist name (e.g. a Last.fm suggestion). Null if there's no exact match. */
+  findTrack(title: string, artist: string): Promise<Track | null>;
   /** Null when there is no active playback session at all. */
   getPlayback(): Promise<PlaybackState | null>;
   /** URIs in the provider's own upcoming queue. */
@@ -32,6 +34,18 @@ export interface MusicProvider {
   resume(): Promise<void>;
   skip(): Promise<void>;
   getDevices(): Promise<Device[]>;
+}
+
+/** A song named by a suggestion service, not yet matched to the music provider. */
+export interface SongRef {
+  title: string;
+  artist: string;
+}
+
+/** Finds songs related to a track, most related first. Powers vote rounds. */
+export interface SuggestionSource {
+  readonly kind: 'lastfm' | 'demo';
+  similarTo(track: Track): Promise<SongRef[]>;
 }
 
 /** A provider call failed. `message` is safe to show to the host. */

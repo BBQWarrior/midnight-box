@@ -6,6 +6,7 @@ import {
   ProviderError,
   type SearchResult,
 } from '../types.js';
+import { bestMatch } from '../../lib/tracks.js';
 import type { SpotifyAuth } from './auth.js';
 
 const API = 'https://api.spotify.com/v1';
@@ -100,6 +101,12 @@ export class SpotifyProvider implements MusicProvider {
       tracks: data.tracks.items.map(toTrack).filter((t): t is Track => t !== null),
       total: data.tracks.total,
     };
+  }
+
+  async findTrack(title: string, artist: string): Promise<Track | null> {
+    const quoted = (s: string) => `"${s.replace(/"/g, ' ').trim()}"`;
+    const { tracks } = await this.search(`track:${quoted(title)} artist:${quoted(artist)}`, 0, 5);
+    return bestMatch(tracks, title, artist);
   }
 
   async getTrack(id: string): Promise<Track | null> {

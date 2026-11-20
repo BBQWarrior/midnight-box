@@ -38,6 +38,8 @@ export interface QueueEntry {
   id: number;
   track: Track;
   requestedBy: GuestTag | null;
+  /** The song won a vote round (requestedBy is null then). */
+  votePick: boolean;
   status: QueueStatus;
   addedAt: number;
 }
@@ -49,6 +51,7 @@ export interface NowPlaying {
   /** Server clock (ms) when progressMs was measured; clients interpolate from this. */
   measuredAt: number;
   requestedBy: GuestTag | null;
+  votePick: boolean;
   deviceName: string | null;
 }
 
@@ -76,6 +79,7 @@ export interface PublicState {
   /** Upcoming songs in play order. `pushed` entries come first. */
   queue: QueueEntry[];
   limits: Limits;
+  vote: VoteState;
   /** Server clock (ms) at snapshot time, used to correct client clock skew. */
   serverTime: number;
 }
@@ -182,7 +186,76 @@ export interface AdminStatus {
   devices: Device[];
   /** Guests the host removed. Unban with DELETE /api/admin/guests/:publicId/ban. */
   banned: GuestTag[];
+  voting: VotingStatus;
 }
+
+// ---- Vote rounds -------------------------------------------------------------
+
+export interface VoteCandidate {
+  track: Track;
+  votes: number;
+}
+
+/** A 30-second round: guests vote for songs related to what's playing, the winner joins the queue. */
+export interface VoteRound {
+  id: number;
+  /** The song the suggestions are related to. */
+  basedOn: { name: string; artist: string };
+  candidates: VoteCandidate[];
+  /** Server clock (ms) when voting closes. */
+  endsAt: number;
+}
+
+export interface VoteResult {
+  roundId: number;
+  /** Null when nobody voted (or every voted song became unavailable). */
+  winner: Track | null;
+  votes: number;
+  endedAt: number;
+}
+
+/** Part of PublicState. */
+export interface VoteState {
+  /** The host has vote rounds switched on and suggestions are available. */
+  active: boolean;
+  /** Null between rounds: rounds only run while fewer than 2 songs are waiting. */
+  round: VoteRound | null;
+  lastResult: VoteResult | null;
+}
+
+/**
+ * POST /api/vote: vote for (vote: true) or take back a vote for (vote: false) one candidate.
+ * Guests can vote for any number of candidates, one vote each. Votes never count against queue limits.
+ */
+export interface VoteBody {
+  roundId: number;
+  trackId: string;
+  vote: boolean;
+}
+
+/** GET /api/vote and POST /api/vote: the caller's own votes in the current round. */
+export interface MyVotes {
+  /** Null when no round is running. */
+  roundId: number | null;
+  /** Track ids of the candidates this device voted for. */
+  trackIds: string[];
+}
+
+/** Host view of vote rounds (in AdminStatus). */
+export interface VotingStatus {
+  /** Where suggestions come from; null when no Last.fm API key is configured. */
+  source: 'lastfm' | 'demo' | null;
+  /** The host's on/off switch (POST /api/admin/vote). */
+  enabled: boolean;
+  /** Why rounds aren't running, in words for the host; null when all is well. */
+  problem: string | null;
+}
+
+/** POST /api/admin/vote */
+export interface VotingToggle {
+  enabled: boolean;
+}
+// POST /api/admin/vote/end closes the current round now and adds the winner.
 
 /** GET /api/admin/cooldowns: what is cooling down right now. */
 export interface CooldownList {

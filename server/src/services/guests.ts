@@ -80,6 +80,11 @@ export class GuestService {
     this.lastIp.set(guest.id, ip);
   }
 
+  /** The address a guest's requests last came from (memory only). */
+  ipOf(guestId: string): string | undefined {
+    return this.lastIp.get(guestId);
+  }
+
   isIpBanned(ip: string): boolean {
     return this.bannedIps.has(ip);
   }

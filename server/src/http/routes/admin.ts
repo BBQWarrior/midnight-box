@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AdminStatus, CooldownList, Device, HostSession } from '@shared/types';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, SESSION_TTL_MS } from '../../services/host-auth.js';
+import { voterKey } from '../../services/votes.js';
 import { HttpError } from '../errors.js';
 import { clientIp, HOST_COOKIE, isHostRequest, makeRequireAdmin, requireHost } from '../security.js';
 import type { AppDeps } from '../app.js';
@@ -17,11 +18,12 @@ const PlaybackBody = z.object({ action: z.enum(['pause', 'resume', 'skip']) });
 const StartBody = z.object({ deviceId: z.string().min(1).max(128) });
 const IdParams = z.object({ id: z.coerce.number().int().positive() });
 const GuestParams = z.object({ publicId: z.string().regex(/^[A-Za-z0-9_-]{12}$/, 'Invalid guest id') });
+const VotingBody = z.object({ enabled: z.boolean() });
 const ClearBody = z.object({ kind: z.enum(['song', 'artist']), key: z.string().min(1).max(512) });
 
 /** Host panel: password setup and login, then playback, queue, cooldown and guest controls. */
 export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns } = deps;
+  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns, votes } = deps;
   const opts = {
     preHandler: makeRequireAdmin(hostAuth),
     config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
@@ -103,6 +105,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       onHostMachine: isHostRequest(req),
       devices,
       banned: guests.bannedList(),
+      voting: votes.status(),
     };
   });
 
@@ -143,6 +146,20 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     return reply.status(204).send();
   });
 
+  // ---- Vote rounds ---------------------------------------------------------
+
+  app.post('/api/admin/vote', opts, async (req, reply) => {
+    const { enabled } = VotingBody.parse(req.body);
+    votes.setEnabled(enabled);
+    req.log.info(`Vote rounds turned ${enabled ? 'on' : 'off'}`);
+    return reply.status(204).send();
+  });
+
+  app.post('/api/admin/vote/end', opts, async (_req, reply) => {
+    if (!votes.endNow()) throw new HttpError(400, 'bad_request', 'No vote is running.');
+    return reply.status(204).send();
+  });
+
   // ---- Guests --------------------------------------------------------------
 
   app.post('/api/admin/guests/:publicId/ban', opts, async (req, reply) => {
@@ -150,6 +167,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     const guest = guests.ban(publicId);
     if (!guest) throw new HttpError(404, 'not_found', 'No guest with that id.');
     const removed = queue.removeQueuedFor(guest.id);
+    votes.removeVoter(voterKey(guest.id, guests.ipOf(guest.id)), voterKey(guest.id, undefined));
     req.log.info(`Host removed ${guest.name ?? 'a guest'} from the party (${removed} queued songs dropped)`);
     hub.broadcast();
     return reply.status(204).send();

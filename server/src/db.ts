@@ -83,6 +83,9 @@ const MIGRATIONS: (string | ((db: Db) => void))[] = [
       }
     }
   },
+
+  // v3: vote rounds. Winners join the queue without a guest.
+  `ALTER TABLE queue ADD COLUMN source TEXT NOT NULL DEFAULT 'guest' CHECK (source IN ('guest', 'vote'));`,
 ];
 
 export function openDb(file: string): Db {

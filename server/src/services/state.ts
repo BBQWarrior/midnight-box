@@ -3,6 +3,7 @@ import type { ClientToServerEvents, Limits, NowPlaying, PublicState, ServerToCli
 import type { MusicProvider } from '../providers/types.js';
 import type { Player } from './player.js';
 import { QueueService } from './queue.js';
+import type { VoteService } from './votes.js';
 
 export type IoServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
@@ -13,6 +14,7 @@ interface StateDeps {
   provider: MusicProvider;
   queue: QueueService;
   player: Player;
+  votes: VoteService;
   limits: Limits;
   demo: boolean;
   now?: () => number;
@@ -37,9 +39,10 @@ export class StateHub {
   }
 
   snapshot(): PublicState {
-    const { provider, queue, player, limits, demo } = this.deps;
+    const { provider, queue, player, votes, limits, demo } = this.deps;
     const { state, measuredAt } = player.playback;
-    const playingRow = queue.playing();
+    const row = queue.playing();
+    const playingRow = row && row.track.uri === state?.track?.uri ? row : undefined;
 
     const nowPlaying: NowPlaying | null = state?.track
       ? {
@@ -47,7 +50,8 @@ export class StateHub {
           progressMs: state.progressMs,
           isPlaying: state.isPlaying,
           measuredAt,
-          requestedBy: playingRow?.track.uri === state.track.uri ? playingRow.requestedBy : null,
+          requestedBy: playingRow?.requestedBy ?? null,
+          votePick: playingRow?.source === 'vote',
           deviceName: state.device?.name ?? null,
         }
       : null;
@@ -58,6 +62,7 @@ export class StateHub {
       nowPlaying,
       queue: queue.upcoming().map(QueueService.toEntry),
       limits,
+      vote: votes.state(),
       serverTime: this.now(),
     };
   }

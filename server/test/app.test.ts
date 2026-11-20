@@ -6,6 +6,7 @@ import type {
   HostSession,
   Limits,
   Me,
+  MyVotes,
   PublicState,
   SearchResponse,
 } from '@shared/types';
@@ -14,12 +15,14 @@ import { openDb } from '../src/db.js';
 import { buildApp } from '../src/http/app.js';
 import { MOCK_CATALOG } from '../src/providers/mock/catalog.js';
 import { MockProvider } from '../src/providers/mock/provider.js';
+import { MockSuggestions } from '../src/providers/mock/suggestions.js';
 import { CooldownService } from '../src/services/cooldowns.js';
 import { GuestService } from '../src/services/guests.js';
 import { HostAuth } from '../src/services/host-auth.js';
 import { Player } from '../src/services/player.js';
 import { QueueService } from '../src/services/queue.js';
 import { StateHub } from '../src/services/state.js';
+import { VoteService } from '../src/services/votes.js';
 
 const MIN = 60_000;
 const T0 = 1_700_000_000_000;
@@ -47,6 +50,7 @@ const baseConfig: Config = {
     songCooldownMinutes: 120,
     artistCooldownMinutes: 20,
   },
+  vote: { lastfmApiKey: null, roundMs: 30_000, maxWaiting: 2 },
   dataDir: '',
   clientDistDir: '/nonexistent',
   uiPort: 8080,
@@ -54,6 +58,8 @@ const baseConfig: Config = {
 
 let app: FastifyInstance;
 let advance: (ms: number) => void;
+let player: Player;
+let votes: VoteService;
 
 async function makeApp(limits: Partial<Limits> = {}) {
   let t = T0;
@@ -73,11 +79,26 @@ async function makeApp(limits: Partial<Limits> = {}) {
     now,
   );
   const hostAuth = new HostAuth(db, now);
-  const player = new Player(
+  player = new Player(
     { provider, queue, onChange: () => {}, log: silent, now },
     { pollMs: 1_000, idlePollMs: 1_000, pushAheadMs: 1_000, autoStartCooldownMs: 0 },
   );
-  const hub = new StateHub({ provider, queue, player, limits: config.limits, demo: true, now });
+  votes = new VoteService(
+    {
+      db,
+      provider,
+      source: new MockSuggestions(MOCK_CATALOG),
+      queue,
+      cooldowns,
+      player,
+      log: silent,
+      onChange: () => {},
+      now,
+      shuffle: (items) => items,
+    },
+    { roundMs: config.vote.roundMs, maxWaiting: config.vote.maxWaiting, candidates: 4, retryMs: 30_000 },
+  );
+  const hub = new StateHub({ provider, queue, player, votes, limits: config.limits, demo: true, now });
   ({ app } = await buildApp({
     config,
     provider,
@@ -87,6 +108,7 @@ async function makeApp(limits: Partial<Limits> = {}) {
     cooldowns,
     hostAuth,
     player,
+    votes,
     hub,
     joinInfo: { joinUrl: 'http://192.168.1.10:8080/', qrDataUrl: 'data:image/svg+xml;base64,' },
     cookieSecret: 'test-cookie-secret-that-is-long-enough',
@@ -313,6 +335,119 @@ describe('banning', () => {
     await makeApp();
     const res = await app.inject({ method: 'POST', url: '/api/admin/guests/AAAAAAAAAAAA/ban' });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('vote rounds', () => {
+  async function startRound() {
+    await player.tick();
+    await votes.tick();
+    const round = (await state()).vote.round;
+    if (!round) throw new Error('no round started');
+    return round;
+  }
+
+  const castVote = (cookies: Record<string, string>, roundId: number, trackId: string, vote = true, remoteAddress = PHONE) =>
+    app.inject({ method: 'POST', url: '/api/vote', cookies, remoteAddress, payload: { roundId, trackId, vote } });
+
+  const voteCounts = async () => (await state()).vote.round!.candidates.map((c) => c.votes);
+
+  it('adds the most voted song as a vote pick, and votes never use up queue limits', async () => {
+    await makeApp({ windowSongs: 1 });
+    const maya = await join('Maya', PHONE);
+    expect((await queueSongs(maya, [t1], PHONE)).json<AddToQueueResponse>().added).toHaveLength(1);
+
+    // Maya has used up her songs for this window, but she can still vote, for several songs.
+    const round = await startRound();
+    expect(round.candidates).toHaveLength(4);
+    const [a, b] = round.candidates.map((c) => c.track.id) as [string, string];
+    expect((await castVote(maya, round.id, a)).json<MyVotes>().trackIds).toEqual([a]);
+    expect((await castVote(maya, round.id, b)).json<MyVotes>().trackIds).toEqual([a, b]);
+    const leo = await join('Leo', '192.168.1.21');
+    await castVote(leo, round.id, b, true, '192.168.1.21');
+    expect(await voteCounts()).toEqual([1, 2, 0, 0]);
+
+    advance(30_000);
+    await votes.tick();
+    const after = await state();
+    expect(after.vote.lastResult).toMatchObject({ roundId: round.id, winner: { id: b }, votes: 2 });
+    expect(after.queue.map((e) => [e.track.id, e.votePick, e.requestedBy?.name ?? null])).toEqual([
+      [t1, false, 'Maya'],
+      [b, true, null],
+    ]);
+    // Two songs are waiting now, so no new round starts.
+    expect(after.vote.round).toBeNull();
+  });
+
+  it('counts one vote per device and lets guests take votes back', async () => {
+    await makeApp();
+    const round = await startRound();
+    const id = round.candidates[0]!.track.id;
+    const phone = await join('Maya', PHONE);
+    const samePhoneNewCookie = await join('Maya again', PHONE);
+    await castVote(phone, round.id, id);
+    await castVote(samePhoneNewCookie, round.id, id);
+    expect((await voteCounts())[0]).toBe(1);
+
+    // On the host computer every guest session counts, since they all share 127.0.0.1.
+    await castVote(await join('Host A'), round.id, id, true, '127.0.0.1');
+    await castVote(await join('Host B'), round.id, id, true, '127.0.0.1');
+    expect((await voteCounts())[0]).toBe(3);
+
+    expect((await castVote(phone, round.id, id, false)).json<MyVotes>()).toEqual({ roundId: round.id, trackIds: [] });
+    expect((await voteCounts())[0]).toBe(2);
+    const mine = await app.inject({ method: 'GET', url: '/api/vote', cookies: samePhoneNewCookie, remoteAddress: PHONE });
+    expect(mine.json<MyVotes>()).toEqual({ roundId: round.id, trackIds: [] });
+  });
+
+  it('rejects votes for another round, a song not on the ballot, or after time is up', async () => {
+    await makeApp();
+    const round = await startRound();
+    const guest = await join('Maya', PHONE);
+    const candidate = round.candidates[0]!.track.id;
+    const other = MOCK_CATALOG.find((t) => !round.candidates.some((c) => c.track.id === t.id))!.id;
+
+    expect((await castVote(guest, round.id + 1, candidate)).json().error.message).toMatch(/ended/);
+    expect((await castVote(guest, round.id, other)).json().error.message).toMatch(/not in this vote/);
+    advance(30_000);
+    expect((await castVote(guest, round.id, candidate)).statusCode).toBe(400);
+    expect((await castVote(await join(null, PHONE), round.id, candidate)).json().error.code).toBe('name_required');
+  });
+
+  it('lets the host end a round early and turn voting off', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const round = await startRound();
+    const pick = round.candidates[2]!.track.id;
+    await castVote(await join('Maya', PHONE), round.id, pick);
+
+    const end = (cookies?: Record<string, string>) =>
+      app.inject({ method: 'POST', url: '/api/admin/vote/end', cookies, payload: {} });
+    expect((await end()).statusCode).toBe(401);
+    expect((await end(host)).statusCode).toBe(204);
+    expect((await state()).queue.at(-1)).toMatchObject({ votePick: true, track: { id: pick } });
+
+    await app.inject({ method: 'POST', url: '/api/admin/vote', cookies: host, payload: { enabled: false } });
+    await votes.tick();
+    expect((await state()).vote).toMatchObject({ active: false, round: null });
+    const status = (await app.inject({ method: 'GET', url: '/api/admin/status', cookies: host })).json<AdminStatus>();
+    expect(status.voting).toEqual({ source: 'demo', enabled: false, problem: null });
+  });
+
+  it("drops a removed guest's votes", async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const round = await startRound();
+    const guest = await join('Rowdy', PHONE);
+    await castVote(guest, round.id, round.candidates[0]!.track.id);
+    const me = await app.inject({ method: 'GET', url: '/api/me', cookies: guest, remoteAddress: PHONE });
+    await app.inject({
+      method: 'POST',
+      url: `/api/admin/guests/${me.json<Me>().publicId}/ban`,
+      cookies: host,
+      payload: {},
+    });
+    expect((await voteCounts())[0]).toBe(0);
   });
 });
 

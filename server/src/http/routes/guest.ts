@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AddToQueueResponse, Me, Quota, RejectReason, SearchResponse, Track } from '@shared/types';
+import type { AddToQueueResponse, Me, MyVotes, Quota, RejectReason, SearchResponse, Track } from '@shared/types';
 import { LruCache } from '../../lib/cache.js';
 import { cleanName, type Guest, NAME_MAX_LENGTH } from '../../services/guests.js';
 import { QueueService } from '../../services/queue.js';
+import { voterKey } from '../../services/votes.js';
 import { HttpError } from '../errors.js';
 import { clientIp } from '../security.js';
 import type { AppDeps } from '../app.js';
@@ -20,6 +21,7 @@ const SearchQuery = z.object({
   offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
 });
 const TrackId = z.string().min(1).max(64).regex(/^[A-Za-z0-9:_-]+$/, 'Invalid track id');
+const VoteBody = z.object({ roundId: z.number().int().positive(), trackId: TrackId, vote: z.boolean() });
 
 interface RawPage {
   tracks: Track[];
@@ -27,7 +29,7 @@ interface RawPage {
 }
 
 export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { guests, queue, cooldowns, provider, player, hub, config, joinInfo } = deps;
+  const { guests, queue, cooldowns, provider, player, votes, hub, config, joinInfo } = deps;
   const now = deps.now ?? Date.now;
   const { limits } = config;
   const windowMs = limits.windowMinutes * 60_000;
@@ -179,5 +181,23 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
     const response: AddToQueueResponse = { added, rejected, quota: quotaFor(guest.id) };
     return response;
+  });
+
+  // ---- Vote rounds ---------------------------------------------------------
+  // Voting never counts against the queue limits: guests at their limit can still pick the next song.
+
+  app.get('/api/vote', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req): Promise<MyVotes> => {
+    const guest = requireGuest(req);
+    return votes.myVotes(voterKey(guest.id, clientIp(req)));
+  });
+
+  app.post('/api/vote', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req): Promise<MyVotes> => {
+    const guest = requireGuest(req);
+    if (!guest.name) throw new HttpError(400, 'name_required', 'Pick a name first.');
+    const { roundId, trackId, vote } = VoteBody.parse(req.body);
+    const result = votes.vote(voterKey(guest.id, clientIp(req)), roundId, trackId, vote);
+    if (result === 'closed') throw new HttpError(400, 'bad_request', 'That vote has ended.');
+    if (result === 'not_a_candidate') throw new HttpError(400, 'bad_request', 'That song is not in this vote.');
+    return result;
   });
 }

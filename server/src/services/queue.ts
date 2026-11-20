@@ -11,6 +11,9 @@ import { mainArtist, songKey } from '../lib/tracks.js';
  */
 export type QueueRowStatus = 'queued' | 'pushed' | 'playing' | 'played' | 'removed';
 
+/** Who asked for a song: a guest, or the winner of a vote round. */
+export type QueueSource = 'guest' | 'vote';
+
 export interface QueueRow {
   id: number;
   track: Track;
@@ -19,6 +22,7 @@ export interface QueueRow {
   status: QueueRowStatus;
   createdAt: number;
   round: number;
+  source: QueueSource;
 }
 
 interface RawRow {
@@ -28,12 +32,13 @@ interface RawRow {
   status: QueueRowStatus;
   created_at: number;
   round: number;
+  source: QueueSource;
   public_id: string | null;
   name: string | null;
 }
 
 const SELECT = `
-  SELECT q.id, q.track_json, q.guest_id, q.status, q.created_at, q.round, g.public_id, g.name
+  SELECT q.id, q.track_json, q.guest_id, q.status, q.created_at, q.round, q.source, g.public_id, g.name
   FROM queue q LEFT JOIN guests g ON g.id = q.guest_id`;
 
 export type RemoveResult = 'removed' | 'not_found' | 'locked';
@@ -63,6 +68,14 @@ export class QueueService {
 
   playing(): QueueRow | undefined {
     return this.one(`${SELECT} WHERE q.status = 'playing' ORDER BY q.id DESC LIMIT 1`);
+  }
+
+  /** Songs waiting to play (queued or pushed). */
+  waitingCount(): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS n FROM queue WHERE status IN ('queued', 'pushed')`).get() as {
+      n: number;
+    };
+    return row.n;
   }
 
   /** Songs a guest has waiting (queued or pushed). */
@@ -105,9 +118,10 @@ export class QueueService {
   /**
    * Adds a song. Guests take turns: a guest's next song goes one round after their previous
    * one, but never into a round that has already been played. So a newcomer's first song
-   * lands ahead of someone else's third.
+   * lands ahead of someone else's third. Vote picks take turns the same way, as if the
+   * party were one more guest.
    */
-  add(track: Track, guestId: string | null): QueueRow {
+  add(track: Track, guestId: string | null, source: QueueSource = 'guest'): QueueRow {
     const now = this.now();
     const current = (
       this.db
@@ -115,19 +129,21 @@ export class QueueService {
         .get() as { r: number }
     ).r;
     let round = current;
-    if (guestId) {
-      const last = (
-        this.db
-          .prepare(`SELECT MAX(round) AS r FROM queue WHERE guest_id = ? AND status != 'removed'`)
-          .get(guestId) as { r: number | null }
-      ).r;
-      if (last !== null) round = Math.max(current, last + 1);
-    }
+    const owner =
+      source === 'vote'
+        ? this.db.prepare(`SELECT MAX(round) AS r FROM queue WHERE source = 'vote' AND status != 'removed'`).get()
+        : guestId
+          ? this.db
+              .prepare(`SELECT MAX(round) AS r FROM queue WHERE guest_id = ? AND status != 'removed'`)
+              .get(guestId)
+          : undefined;
+    const last = (owner as { r: number | null } | undefined)?.r ?? null;
+    if (last !== null) round = Math.max(current, last + 1);
     const result = this.db
       .prepare(
         `INSERT INTO queue
-           (track_id, uri, track_json, song_key, artist_id, round, guest_id, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+           (track_id, uri, track_json, song_key, artist_id, round, guest_id, source, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
       )
       .run(
         track.id,
@@ -137,6 +153,7 @@ export class QueueService {
         mainArtist(track)?.id ?? null,
         round,
         guestId,
+        source,
         now,
         now,
       );
@@ -201,6 +218,7 @@ export class QueueService {
       id: row.id,
       track: row.track,
       requestedBy: row.requestedBy,
+      votePick: row.source === 'vote',
       status: row.status === 'pushed' ? 'pushed' : 'queued',
       addedAt: row.createdAt,
     };
@@ -225,5 +243,6 @@ function toRow(raw: RawRow): QueueRow {
     status: raw.status,
     createdAt: raw.created_at,
     round: raw.round,
+    source: raw.source,
   };
 }

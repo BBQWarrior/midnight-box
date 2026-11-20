@@ -26,6 +26,11 @@ const EnvSchema = z.object({
   GUEST_WINDOW_MINUTES: int(20, 1, 24 * 60),
   SONG_COOLDOWN_MINUTES: int(120, 0, 7 * 24 * 60),
   ARTIST_COOLDOWN_MINUTES: int(20, 0, 7 * 24 * 60),
+  LASTFM_API_KEY: optional(
+    z.string().trim().regex(/^[0-9a-f]{32}$/i, 'LASTFM_API_KEY should be the 32-character API key from last.fm/api/accounts'),
+  ),
+  VOTE_ROUND_SECONDS: int(30, 10, 600),
+  VOTE_WHEN_FEWER_THAN: int(2, 1, 50),
   DATA_DIR: optional(z.string()),
 });
 
@@ -42,6 +47,13 @@ export interface Config {
   publicUrl: string | undefined;
   spotify: { clientId: string; redirectUri: string } | null;
   limits: Limits;
+  vote: {
+    /** Null: no suggestions outside demo mode, so vote rounds are off. */
+    lastfmApiKey: string | null;
+    roundMs: number;
+    /** Rounds run while fewer than this many songs are waiting. */
+    maxWaiting: number;
+  };
   dataDir: string;
   clientDistDir: string;
   /** Where the browser UI lives: Vite in dev, this server in production. */
@@ -90,6 +102,11 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
       windowMinutes: e.GUEST_WINDOW_MINUTES,
       songCooldownMinutes: e.SONG_COOLDOWN_MINUTES,
       artistCooldownMinutes: e.ARTIST_COOLDOWN_MINUTES,
+    },
+    vote: {
+      lastfmApiKey: e.LASTFM_API_KEY ?? null,
+      roundMs: e.VOTE_ROUND_SECONDS * 1000,
+      maxWaiting: e.VOTE_WHEN_FEWER_THAN,
     },
     dataDir: path.resolve(ROOT_DIR, e.DATA_DIR ?? 'data'),
     clientDistDir: path.join(ROOT_DIR, 'client', 'dist'),
