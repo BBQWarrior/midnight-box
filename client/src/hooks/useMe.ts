@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Me } from '@shared/types';
-import { api } from '../lib/api';
+import type { Me, Quota } from '@shared/types';
+import { ApiRequestError, api } from '../lib/api';
 
-export function useMe(): { me: Me | null; setName: (name: string) => Promise<void> } {
+export interface UseMe {
+  me: Me | null;
+  banned: boolean;
+  setName: (name: string) => Promise<void>;
+  setQuota: (quota: Quota) => void;
+  markBanned: () => void;
+}
+
+export function useMe(): UseMe {
   const [me, setMe] = useState<Me | null>(null);
+  const [banned, setBanned] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -11,7 +20,9 @@ export function useMe(): { me: Me | null; setName: (name: string) => Promise<voi
       (m) => {
         if (alive) setMe(m);
       },
-      () => undefined,
+      (err: unknown) => {
+        if (alive && err instanceof ApiRequestError && err.code === 'forbidden') setBanned(true);
+      },
     );
     return () => {
       alive = false;
@@ -19,8 +30,19 @@ export function useMe(): { me: Me | null; setName: (name: string) => Promise<voi
   }, []);
 
   const setName = useCallback(async (name: string) => {
-    setMe(await api.setName(name.trim()));
+    try {
+      setMe(await api.setName(name.trim()));
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.code === 'forbidden') setBanned(true);
+      throw err;
+    }
   }, []);
 
-  return { me, setName };
+  const setQuota = useCallback((quota: Quota) => {
+    setMe((prev) => (prev ? { ...prev, quota } : prev));
+  }, []);
+
+  const markBanned = useCallback(() => setBanned(true), []);
+
+  return { me, banned, setName, setQuota, markBanned };
 }

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Loader2, Search } from 'lucide-react';
-import type { PublicState, RejectReason, Track } from '@shared/types';
-import { api, errorMessage, isAbort } from '../lib/api';
-import { formatTime } from '../lib/format';
+import type { PublicState, Quota, RejectReason, SearchResult, Track, TrackBlock } from '@shared/types';
+import { ApiRequestError, api, errorMessage, isAbort } from '../lib/api';
+import { formatClock, formatTime } from '../lib/format';
+import { computeAllowance } from '../lib/quota';
+import { useNow } from '../hooks/useNow';
 import { Badge } from './Badge';
 import { Cover } from './Cover';
 import { useToast } from './Toast';
@@ -10,19 +12,54 @@ import { useToast } from './Toast';
 interface Props {
   state: PublicState;
   myPublicId: string;
+  recentAdds: number[];
+  skewMs: number;
+  onQuota: (quota: Quota) => void;
+  onForbidden: () => void;
   onAdded: () => void;
 }
 
-const REJECT_TEXT: Record<RejectReason, string> = {
-  already_queued: 'already in the queue',
-  limit_reached: "you've hit your song limit",
-  not_found: "couldn't find that song",
-};
+function at(availableAt: number | null): string {
+  return availableAt === null ? '' : ` at ${formatClock(availableAt)}`;
+}
 
-export function SearchPanel({ state, myPublicId, onAdded }: Props) {
+function rejectText(reason: RejectReason, availableAt: number | null): string {
+  switch (reason) {
+    case 'already_queued':
+      return 'already in the queue';
+    case 'artist_queued':
+      return 'this artist is already queued';
+    case 'song_cooldown':
+      return `played recently, free again${at(availableAt)}`;
+    case 'artist_cooldown':
+      return `artist played recently, free again${at(availableAt)}`;
+    case 'too_soon':
+      return availableAt === null ? "you've added enough for now" : `you can add again at ${formatClock(availableAt)}`;
+    case 'limit_reached':
+      return "you've hit your song limit";
+    case 'not_found':
+      return "couldn't find that song";
+  }
+}
+
+function blockText(block: TrackBlock): string {
+  const when = block.availableAt === null ? '' : ` · free again at ${formatClock(block.availableAt)}`;
+  switch (block.reason) {
+    case 'already_queued':
+      return 'Already in the queue';
+    case 'artist_queued':
+      return 'This artist is already queued';
+    case 'song_cooldown':
+      return `Played recently${when}`;
+    case 'artist_cooldown':
+      return `Artist played recently${when}`;
+  }
+}
+
+export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, onForbidden, onAdded }: Props) {
   const toast = useToast();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Track[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -31,10 +68,10 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
   const abortRef = useRef<AbortController | null>(null);
 
   const { limits, queue, nowPlaying, providerReady } = state;
+  const now = useNow(true, 5000);
   const myPending = queue.filter((e) => e.requestedBy?.publicId === myPublicId).length;
-  const remaining = Math.max(0, limits.maxPendingPerGuest - myPending);
-  const maxSelectable = Math.min(limits.maxPerRequest, remaining);
-  const queuedIds = new Set(queue.map((e) => e.track.id));
+  const allowance = computeAllowance(limits, myPending, recentAdds, now + skewMs);
+  const maxSelectable = allowance.count;
   const playingId = nowPlaying?.track.id;
 
   const runSearch = useCallback(async (q: string, offset: number): Promise<void> => {
@@ -44,7 +81,7 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
     setLoading(true);
     try {
       const res = await api.search(q, offset, ctrl.signal);
-      setResults((prev) => (offset === 0 ? res.tracks : [...prev, ...res.tracks]));
+      setResults((prev) => (offset === 0 ? res.results : [...prev, ...res.results]));
       setNextOffset(res.nextOffset);
       setSearched(true);
       setLoading(false);
@@ -90,18 +127,29 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
         parts.push(`Added ${res.added.length} song${res.added.length === 1 ? '' : 's'}`);
       }
       const trackName = (id: string): string => selected.get(id)?.name ?? 'A song';
-      for (const r of res.rejected) parts.push(`${trackName(r.trackId)}: ${REJECT_TEXT[r.reason]}`);
+      for (const r of res.rejected) {
+        parts.push(`${trackName(r.trackId)}: ${rejectText(r.reason, r.availableAt)}`);
+      }
+      onQuota(res.quota);
       toast.show(parts.join('. ') || 'Nothing was added', res.added.length > 0 ? 'info' : 'error');
       setSelected(new Map());
       onAdded();
     } catch (err) {
-      toast.show(errorMessage(err), 'error');
+      if (err instanceof ApiRequestError && err.code === 'forbidden') onForbidden();
+      else toast.show(errorMessage(err), 'error');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const capHit = remaining === 0 || selected.size >= maxSelectable;
+  const hint =
+    allowance.count > 0
+      ? `You can add ${allowance.count} more${selected.size >= allowance.count ? ' · limit reached for this add' : ''}`
+      : allowance.blockedBy === 'window'
+        ? allowance.nextAt === null
+          ? 'Next song soon'
+          : `Next song at ${formatClock(allowance.nextAt)}`
+        : 'Wait until one of your songs plays';
 
   return (
     <div>
@@ -122,13 +170,7 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
             className="h-12 w-full rounded-full border border-white/15 bg-white/5 pl-11 pr-4 text-base text-white placeholder:text-white/40 disabled:opacity-50"
           />
         </div>
-        <p className="mt-2 px-1 text-xs text-white/60">
-          You have {myPending} of {limits.maxPendingPerGuest} songs waiting
-          {providerReady && capHit && remaining > 0 && selected.size >= maxSelectable
-            ? ` · max ${maxSelectable} per add`
-            : ''}
-          {remaining === 0 ? ' · wait for one to play before adding more' : ''}
-        </p>
+        <p className="mt-2 px-1 text-xs text-white/60">{hint}</p>
       </div>
 
       {loading && results.length === 0 && (
@@ -144,10 +186,9 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
       )}
 
       <ul className="flex flex-col gap-2 pb-28">
-        {results.map((track) => {
+        {results.map(({ track, block }) => {
           const isPlaying = track.id === playingId;
-          const inQueue = queuedIds.has(track.id);
-          const disabled = isPlaying || inQueue;
+          const disabled = isPlaying || block !== null;
           const isSel = selected.has(track.id);
           const blocked = !disabled && !isSel && selected.size >= maxSelectable;
           return (
@@ -171,13 +212,12 @@ export function SearchPanel({ state, myPublicId, onAdded }: Props) {
                   <span className="block truncate text-xs text-white/60">
                     {track.artists.map((a) => a.name).join(', ')}
                   </span>
+                  {block && <span className="block text-xs text-amber-200/80">{blockText(block)}</span>}
                 </span>
                 <span className="flex shrink-0 flex-col items-end gap-1">
                   {isPlaying ? (
                     <Badge tone="cyan">Playing</Badge>
-                  ) : inQueue ? (
-                    <Badge tone="muted">In queue</Badge>
-                  ) : (
+                  ) : block ? null : (
                     <span
                       aria-hidden="true"
                       className={`flex size-6 items-center justify-center rounded-full border ${

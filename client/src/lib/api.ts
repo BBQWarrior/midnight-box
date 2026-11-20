@@ -2,6 +2,9 @@ import type {
   AddToQueueResponse,
   AdminStatus,
   ApiError,
+  ClearCooldown,
+  CooldownList,
+  HostSession,
   JoinInfo,
   Me,
   PlaybackCommand,
@@ -24,11 +27,13 @@ export class ApiRequestError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
+    const isRead = !init?.method || init.method === 'GET';
     res = await fetch(path, {
       credentials: 'same-origin',
       ...init,
+      ...(isRead ? {} : { body: init?.body ?? '{}' }),
       headers: {
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(isRead ? {} : { 'Content-Type': 'application/json' }),
         ...init?.headers,
       },
     });
@@ -89,4 +94,17 @@ export const api = {
   start: (deviceId: string) =>
     request<unknown>('/api/admin/start', { method: 'POST', body: json({ deviceId }) }),
   removeFromQueue: (id: number) => request<void>(`/api/admin/queue/${id}`, { method: 'DELETE' }),
+  getAdminSession: () => request<HostSession>('/api/admin/session'),
+  adminSetup: (password: string) =>
+    request<void>('/api/admin/setup', { method: 'POST', body: json({ password }) }),
+  adminLogin: (password: string) =>
+    request<void>('/api/admin/login', { method: 'POST', body: json({ password }) }),
+  adminLogout: () => request<void>('/api/admin/logout', { method: 'POST' }),
+  banGuest: (publicId: string) =>
+    request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'POST' }),
+  unbanGuest: (publicId: string) =>
+    request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'DELETE' }),
+  getCooldowns: () => request<CooldownList>('/api/admin/cooldowns'),
+  clearCooldown: (body: ClearCooldown) =>
+    request<void>('/api/admin/cooldowns/clear', { method: 'POST', body: json(body) }),
 };

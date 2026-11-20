@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Pencil, WifiOff } from 'lucide-react';
+import type { Limits } from '@shared/types';
+import { formatMinutes } from '../lib/format';
 import { useLiveState } from '../hooks/useLiveState';
 import { useMe } from '../hooks/useMe';
 import { NameCard } from '../components/NameCard';
@@ -9,11 +11,30 @@ import { SearchPanel } from '../components/SearchPanel';
 
 type Tab = 'queue' | 'add';
 
+function rulesText(l: Limits): string {
+  const parts = [`Up to ${l.windowSongs} songs every ${l.windowMinutes} min`, `${l.maxPendingPerGuest} waiting at once`];
+  const rest: string[] = [];
+  if (l.songCooldownMinutes > 0) rest.push(`songs rest ${formatMinutes(l.songCooldownMinutes)}`);
+  if (l.artistCooldownMinutes > 0) rest.push(`artists ${formatMinutes(l.artistCooldownMinutes)}`);
+  if (rest.length > 0) parts.push(rest.join(', '));
+  return parts.join(' · ');
+}
+
 export function GuestPage() {
   const { state, connected, skewMs } = useLiveState();
-  const { me, setName } = useMe();
+  const { me, banned, setName, setQuota, markBanned } = useMe();
   const [tab, setTab] = useState<Tab>('queue');
   const [editingName, setEditingName] = useState(false);
+
+  if (banned) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-6">
+        <p role="alert" className="max-w-sm text-center text-lg text-white/80">
+          The host removed you from this party.
+        </p>
+      </div>
+    );
+  }
 
   if (!me || !state) {
     return (
@@ -94,12 +115,22 @@ export function GuestPage() {
         </button>
       </div>
 
+      <p className="px-1 text-xs text-white/50">{rulesText(state.limits)}</p>
+
       <main className="pb-8">
         <div hidden={tab !== 'queue'}>
           <QueueList queue={state.queue} myPublicId={me.publicId} onAddSongs={() => setTab('add')} />
         </div>
         <div hidden={tab !== 'add'}>
-          <SearchPanel state={state} myPublicId={me.publicId} onAdded={() => setTab('queue')} />
+          <SearchPanel
+            state={state}
+            myPublicId={me.publicId}
+            recentAdds={me.quota.recentAdds}
+            skewMs={skewMs}
+            onQuota={setQuota}
+            onForbidden={markBanned}
+            onAdded={() => setTab('queue')}
+          />
         </div>
       </main>
     </div>

@@ -1,5 +1,6 @@
-import { ListMusic, X } from 'lucide-react';
-import type { QueueEntry } from '@shared/types';
+import { useState } from 'react';
+import { ListMusic, UserX, X } from 'lucide-react';
+import type { GuestTag, QueueEntry } from '@shared/types';
 import { Badge } from './Badge';
 import { Cover } from './Cover';
 
@@ -9,9 +10,12 @@ interface Props {
   onAddSongs?: () => void;
   onRemove?: (entry: QueueEntry) => void;
   removingId?: number | null;
+  onBan?: (guest: GuestTag) => void;
 }
 
-export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId }: Props) {
+export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId, onBan }: Props) {
+  const [confirmBan, setConfirmBan] = useState<string | null>(null);
+
   if (queue.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/5 px-6 py-10 text-center backdrop-blur-xl">
@@ -56,6 +60,35 @@ export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId 
                 {mine && <Badge tone="accent">You</Badge>}
                 {entry.status === 'pushed' && <Badge tone="cyan">Up next</Badge>}
               </p>
+              {onBan && entry.requestedBy && (
+                <p className="mt-1 flex items-center gap-2 text-xs">
+                  {confirmBan === entry.requestedBy.publicId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (entry.requestedBy) onBan(entry.requestedBy);
+                          setConfirmBan(null);
+                        }}
+                        className="min-h-8 rounded-full border border-rose-400/40 bg-rose-500/20 px-3 font-semibold text-rose-100"
+                      >
+                        Yes, remove {entry.requestedBy.name}
+                      </button>
+                      <button type="button" onClick={() => setConfirmBan(null)} className="min-h-8 px-2 text-white/60">
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmBan(entry.requestedBy?.publicId ?? null)}
+                      className="flex min-h-8 items-center gap-1 rounded-full px-2 text-rose-200/80 hover:bg-white/10"
+                    >
+                      <UserX size={12} aria-hidden="true" /> Remove guest
+                    </button>
+                  )}
+                </p>
+              )}
             </div>
             {onRemove && (
               <button
