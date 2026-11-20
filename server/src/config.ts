@@ -80,6 +80,10 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
     );
   }
 
+  // Demo songs are 4x shorter and the catalog has only 36 of them, so party-length cooldowns would
+  // rest every song within the hour (and leave nothing to vote on). Demo mode caps them.
+  const demoCap = (minutes: number, cap: number) => (demo ? Math.min(minutes, cap) : minutes);
+
   return {
     dev,
     demo,
@@ -100,8 +104,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
       maxPerRequest: Math.min(e.MAX_PER_REQUEST, e.MAX_PENDING_PER_GUEST),
       windowSongs: e.GUEST_WINDOW_SONGS,
       windowMinutes: e.GUEST_WINDOW_MINUTES,
-      songCooldownMinutes: e.SONG_COOLDOWN_MINUTES,
-      artistCooldownMinutes: e.ARTIST_COOLDOWN_MINUTES,
+      songCooldownMinutes: demoCap(e.SONG_COOLDOWN_MINUTES, 10),
+      artistCooldownMinutes: demoCap(e.ARTIST_COOLDOWN_MINUTES, 3),
     },
     vote: {
       lastfmApiKey: e.LASTFM_API_KEY ?? null,

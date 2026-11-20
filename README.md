@@ -51,7 +51,8 @@ npm run demo
 
 Open http://127.0.0.1:5173 for the guest view and http://127.0.0.1:5173/admin for the host panel
 (the first visit asks you to set a host password). Phones on the same Wi-Fi can scan the QR code
-printed in the terminal.
+printed in the terminal. The demo has 36 made-up songs, so songs are shortened to under a minute
+and cooldowns to 10 minutes (songs) and 3 minutes (artists) to keep things moving.
 
 ## Run it with Spotify
 
