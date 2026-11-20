@@ -19,9 +19,12 @@
     "start": "npm run start -w server",
     "start:demo": "npm run start:demo -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
-    "test": "npm test -w server"
+    "test": "npm test -w server",
+    "reset-password": "npm run reset-password -w server",
+    "screenshots": "npm run build && node scripts/screenshots.mjs"
   },
   "devDependencies": {
-    "concurrently": "^10.0.7"
+    "concurrently": "^10.0.7",
+    "playwright": "^1.65.1"
   }
 }
