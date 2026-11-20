@@ -4,6 +4,7 @@ import type { AdminStatus, CooldownList, GuestTag, HostSession, JoinInfo, QueueE
 import { ApiRequestError, api, errorMessage } from '../lib/api';
 import { useLiveState } from '../hooks/useLiveState';
 import { formatClock } from '../lib/format';
+import { useSecondsLeft } from '../hooks/useSecondsLeft';
 import { QueueList } from '../components/QueueList';
 import { useToast } from '../components/Toast';
 
@@ -182,7 +183,7 @@ export function AdminPage() {
 }
 
 function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
-  const { state } = useLiveState();
+  const { state, skewMs } = useLiveState();
   const toast = useToast();
   const [status, setStatus] = useState<AdminStatus | null>(null);
   const [cooldowns, setCooldowns] = useState<CooldownList | null>(null);
@@ -190,6 +191,7 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [copied, setCopied] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const nowPlayingId = state?.nowPlaying?.track.id ?? null;
+  const secondsLeft = useSecondsLeft(state?.vote.round?.endsAt ?? null, skewMs);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -362,6 +364,79 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
           removingId={removingId}
           onBan={(g: GuestTag) => void run(() => api.banGuest(g.publicId))}
         />
+      </Section>
+
+      <Section title="Vote rounds">
+        {status ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p id="voting-label" className="text-sm font-medium">Let guests vote for the next song</p>
+                <p className="text-xs text-white/50">
+                  {status.voting.source === 'lastfm'
+                    ? 'Suggestions from Last.fm'
+                    : status.voting.source === 'demo'
+                      ? 'Demo suggestions'
+                      : 'No suggestion source'}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={status.voting.enabled}
+                aria-labelledby="voting-label"
+                disabled={status.voting.source === null}
+                onClick={() => void run(() => api.setVoting(!status.voting.enabled))}
+                className={`relative h-8 w-14 shrink-0 rounded-full border border-white/15 transition-colors disabled:opacity-40 ${
+                  status.voting.enabled ? 'bg-accent' : 'bg-white/10'
+                }`}
+              >
+                <span
+                  className={`absolute left-1 top-1 size-6 rounded-full bg-white transition-transform ${
+                    status.voting.enabled ? 'translate-x-6' : ''
+                  }`}
+                />
+              </button>
+            </div>
+            {status.voting.problem && (
+              <p className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+                {status.voting.problem}
+              </p>
+            )}
+            {state?.vote.round && (
+              <div>
+                <h3 className={subhead}>Current round · {secondsLeft}s left</h3>
+                <ul className="flex flex-col gap-2">
+                  {state.vote.round.candidates.map((c) => (
+                    <li key={c.track.id} className={rowClass}>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{c.track.name}</p>
+                        <p className="truncate text-xs text-white/50">{c.track.artists[0]?.name}</p>
+                      </div>
+                      <span className="shrink-0 text-sm tabular-nums text-white/80">
+                        {c.votes} {c.votes === 1 ? 'vote' : 'votes'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" className={`${btn} mt-3`} onClick={() => void run(() => api.endVoteRound())}>
+                  End round now
+                </button>
+              </div>
+            )}
+            {state?.vote.lastResult && (
+              <p className="text-sm text-white/60">
+                {state.vote.lastResult.winner
+                  ? `Last vote: ${state.vote.lastResult.winner.name} (${state.vote.lastResult.votes} ${
+                      state.vote.lastResult.votes === 1 ? 'vote' : 'votes'
+                    })`
+                  : 'Last vote: no votes'}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-white/60">Loading…</p>
+        )}
       </Section>
 
       <Section title="Removed guests">

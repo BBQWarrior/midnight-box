@@ -2,6 +2,7 @@ import { Pause, Disc3 } from 'lucide-react';
 import type { NowPlaying } from '@shared/types';
 import { useNow } from '../hooks/useNow';
 import { formatTime } from '../lib/format';
+import { Badge } from './Badge';
 import { Cover } from './Cover';
 
 interface Props {
@@ -51,7 +52,12 @@ export function NowPlayingCard({ nowPlaying, skewMs }: Props) {
           </p>
           <h2 className="mt-1 truncate text-lg font-semibold">{track.name}</h2>
           <p className="truncate text-sm text-white/70">{track.artists.map((a) => a.name).join(', ')}</p>
-          {nowPlaying.requestedBy && (
+          {nowPlaying.votePick && (
+            <span className="mt-2 inline-block">
+              <Badge tone="cyan">Vote pick</Badge>
+            </span>
+          )}
+          {!nowPlaying.votePick && nowPlaying.requestedBy && (
             <span className="mt-2 inline-block max-w-full truncate rounded-full border border-accent/40 bg-accent/20 px-2.5 py-0.5 text-xs text-violet-100">
               Requested by {nowPlaying.requestedBy.name}
             </span>

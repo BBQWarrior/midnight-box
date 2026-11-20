@@ -7,9 +7,11 @@ import type {
   HostSession,
   JoinInfo,
   Me,
+  MyVotes,
   PlaybackCommand,
   PublicState,
   SearchResponse,
+  VoteBody,
 } from '@shared/types';
 
 export class ApiRequestError extends Error {
@@ -105,6 +107,11 @@ export const api = {
   unbanGuest: (publicId: string) =>
     request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'DELETE' }),
   getCooldowns: () => request<CooldownList>('/api/admin/cooldowns'),
+  getMyVotes: () => request<MyVotes>('/api/vote'),
+  vote: (body: VoteBody) => request<MyVotes>('/api/vote', { method: 'POST', body: json(body) }),
+  setVoting: (enabled: boolean) =>
+    request<void>('/api/admin/vote', { method: 'POST', body: json({ enabled }) }),
+  endVoteRound: () => request<void>('/api/admin/vote/end', { method: 'POST' }),
   clearCooldown: (body: ClearCooldown) =>
     request<void>('/api/admin/cooldowns/clear', { method: 'POST', body: json(body) }),
 };

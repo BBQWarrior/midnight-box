@@ -56,7 +56,11 @@ export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId,
                 {entry.track.artists.map((a) => a.name).join(', ')}
               </p>
               <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/50">
-                <span className="truncate">{entry.requestedBy?.name ?? 'Host'}</span>
+                {entry.votePick ? (
+                  <Badge tone="cyan">Vote pick</Badge>
+                ) : (
+                  <span className="truncate">{entry.requestedBy?.name ?? 'Host'}</span>
+                )}
                 {mine && <Badge tone="accent">You</Badge>}
                 {entry.status === 'pushed' && <Badge tone="cyan">Up next</Badge>}
               </p>

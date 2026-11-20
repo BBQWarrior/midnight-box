@@ -2,7 +2,7 @@
 // Usage: npm run screenshots   (builds first; needs `npx playwright install chromium` once)
 //
 // Runs the production build on a spare port with a throwaway database, seeds a few guests
-// through the public API, then captures the guest and host views at phone size.
+// through the public API, then captures the guest, vote, search and host views at phone size.
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -67,21 +67,64 @@ async function queue(context, ...queries) {
   if (!res.ok() || body.rejected.length > 0) throw new Error(`Queueing failed: ${JSON.stringify(body)}`);
 }
 
+async function currentRound(context) {
+  for (let i = 0; i < 50; i++) {
+    const { vote } = await (await context.request.get(`${BASE}/api/state`)).json();
+    if (vote.round) return vote.round;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error('No vote round started');
+}
+
+async function vote(context, round, ...indexes) {
+  for (const i of indexes) {
+    const data = { roundId: round.id, trackId: round.candidates[i].track.id, vote: true };
+    const res = await context.request.post(`${BASE}/api/vote`, { data });
+    if (!res.ok()) throw new Error(`Vote failed: ${await res.text()}`);
+  }
+}
+
 async function main() {
   await waitForServer();
   mkdirSync(OUT_DIR, { recursive: true });
   const browser = await chromium.launch();
   try {
-    // A small party: fair-queue order will be Maya, Leo, Priya, Maya, Leo.
-    await queue(await guest(browser, 'Maya'), 'gravity waltz', 'cardboard rocket');
-    await queue(await guest(browser, 'Leo'), 'north of never', 'last stop');
-    await queue(await guest(browser, 'Priya'), 'magnetic north');
+    // First-run setup is allowed because this is the host computer.
+    const host = await browser.newContext({ ...PHONE, colorScheme: 'dark' });
+    const setup = await host.request.post(`${BASE}/api/admin/setup`, { data: { password: 'screenshot-demo-pass' } });
+    if (setup.status() !== 204) throw new Error(`Host setup failed: ${setup.status()}`);
 
-    // Guest view.
+    const maya = await guest(browser, 'Maya');
+    const leo = await guest(browser, 'Leo');
+    const priya = await guest(browser, 'Priya');
     const sam = await guest(browser, 'Sam');
+
+    // Vote round: the queue is empty, so one is running. Restart it so there's time for the shot.
+    await currentRound(host);
+    await host.request.post(`${BASE}/api/admin/vote/end`, { data: {} });
+    await new Promise((r) => setTimeout(r, 1_500));
+    const round = await currentRound(host);
+    await vote(maya, round, 0, 2);
+    await vote(leo, round, 0);
+    await vote(priya, round, 1);
     const page = await sam.newPage();
     await page.goto(BASE);
-    await page.getByText('Afterglow Avenue').first().waitFor();
+    await page.getByText('Vote for the next song').waitFor();
+    await page.getByRole('button', { name: `Vote for ${round.candidates[0].track.name}` }).click();
+    await page.getByText('3 votes').waitFor();
+    await page.screenshot({ path: path.join(OUT_DIR, 'vote.png') });
+
+    // Pause voting so the winner doesn't change the queue below.
+    await host.request.post(`${BASE}/api/admin/vote`, { data: { enabled: false } });
+
+    // A small party: fair-queue order will be Maya, Leo, Priya, Maya, Leo.
+    await queue(maya, 'gravity waltz', 'cardboard rocket');
+    await queue(leo, 'north of never', 'last stop');
+    await queue(priya, 'magnetic north');
+
+    // Guest view.
+    await page.reload();
+    await page.getByText('Gravity Waltz').first().waitFor();
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, 'guest.png') });
 
@@ -94,10 +137,8 @@ async function main() {
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, 'search.png') });
 
-    // Host panel, logged in (first-run setup is allowed because this is the host computer).
-    const host = await browser.newContext({ ...PHONE, colorScheme: 'dark' });
-    const setup = await host.request.post(`${BASE}/api/admin/setup`, { data: { password: 'screenshot-demo-pass' } });
-    if (setup.status() !== 204) throw new Error(`Host setup failed: ${setup.status()}`);
+    // Host panel, logged in.
+    await host.request.post(`${BASE}/api/admin/vote`, { data: { enabled: true } });
     const admin = await host.newPage();
     await admin.goto(`${BASE}/admin`);
     await admin.getByText('Gravity Waltz').first().waitFor();

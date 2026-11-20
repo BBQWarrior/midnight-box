@@ -7,6 +7,7 @@ import { useMe } from '../hooks/useMe';
 import { NameCard } from '../components/NameCard';
 import { NowPlayingCard } from '../components/NowPlayingCard';
 import { QueueList } from '../components/QueueList';
+import { VoteCard } from '../components/VoteCard';
 import { SearchPanel } from '../components/SearchPanel';
 
 type Tab = 'queue' | 'add';
@@ -119,6 +120,7 @@ export function GuestPage() {
 
       <main className="pb-8">
         <div hidden={tab !== 'queue'}>
+          <VoteCard vote={state.vote} skewMs={skewMs} onForbidden={markBanned} />
           <QueueList queue={state.queue} myPublicId={me.publicId} onAddSongs={() => setTab('add')} />
         </div>
         <div hidden={tab !== 'add'}>
