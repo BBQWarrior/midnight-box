@@ -1,0 +1,23 @@
+# Dependencies & builds
+node_modules/
+dist/
+build/
+coverage/
+
+# Secrets: never commit. Copy .env.example -> .env locally.
+.env
+.env.*
+!.env.example
+
+# Local data (SQLite DB, Spotify tokens, logs)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
