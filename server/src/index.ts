@@ -11,7 +11,9 @@ import { MockProvider } from './providers/mock/provider.js';
 import { SpotifyAuth } from './providers/spotify/auth.js';
 import { SpotifyProvider } from './providers/spotify/provider.js';
 import type { MusicProvider } from './providers/types.js';
+import { CooldownService } from './services/cooldowns.js';
 import { GuestService } from './services/guests.js';
+import { HostAuth } from './services/host-auth.js';
 import { Player } from './services/player.js';
 import { QueueService } from './services/queue.js';
 import { StateHub } from './services/state.js';
@@ -23,6 +25,14 @@ async function main(): Promise<void> {
 
   mkdirSync(config.dataDir, { recursive: true });
   const db = openDb(path.join(config.dataDir, config.demo ? 'midnight-box-demo.db' : 'midnight-box.db'));
+  const hostAuth = new HostAuth(db);
+
+  if (config.resetHostPassword) {
+    hostAuth.reset();
+    db.close();
+    console.log('\n  Host password cleared. Open the host panel on this computer to set a new one.\n');
+    return;
+  }
 
   let provider: MusicProvider;
   let spotifyAuth: SpotifyAuth | null = null;
@@ -38,6 +48,10 @@ async function main(): Promise<void> {
   const queue = new QueueService(db);
   queue.recoverAfterRestart();
   const guests = new GuestService(db);
+  const cooldowns = new CooldownService(db, queue, {
+    songMs: config.limits.songCooldownMinutes * 60_000,
+    artistMs: config.limits.artistCooldownMinutes * 60_000,
+  });
 
   let hub: StateHub | undefined;
   // Human-readable logs: the person reading them is the host at a party, not a log pipeline.
@@ -70,6 +84,8 @@ async function main(): Promise<void> {
     spotifyAuth,
     guests,
     queue,
+    cooldowns,
+    hostAuth,
     player,
     hub,
     joinInfo,
@@ -90,11 +106,14 @@ async function main(): Promise<void> {
       `  Midnight Box${config.demo ? ' (demo mode)' : ''} is running`,
       '',
       `  Guests join:  ${joinUrl}`,
-      `  Admin panel:  ${adminUrl}  (this computer only)`,
-      provider.isReady() ? '' : `  Connect Spotify from the admin panel to start.`,
+      `  Host panel:   ${adminUrl}`,
+      hostAuth.hasPassword() ? null : '  First run: open the host panel on this computer to set a host password.',
+      provider.isReady() ? null : '  Connect Spotify from the host panel to start.',
       '',
       qr,
-    ].join('\n'),
+    ]
+      .filter((line) => line !== null)
+      .join('\n'),
   );
 
   let closing = false;

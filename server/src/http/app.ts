@@ -11,7 +11,9 @@ import type { JoinInfo } from '@shared/types';
 import type { Config } from '../config.js';
 import type { SpotifyAuth } from '../providers/spotify/auth.js';
 import { type MusicProvider, ProviderError, ProviderNotReadyError } from '../providers/types.js';
+import type { CooldownService } from '../services/cooldowns.js';
 import type { GuestService } from '../services/guests.js';
+import type { HostAuth } from '../services/host-auth.js';
 import type { Player } from '../services/player.js';
 import type { QueueService } from '../services/queue.js';
 import type { IoServer, StateHub } from '../services/state.js';
@@ -27,11 +29,15 @@ export interface AppDeps {
   spotifyAuth: SpotifyAuth | null;
   guests: GuestService;
   queue: QueueService;
+  cooldowns: CooldownService;
+  hostAuth: HostAuth;
   player: Player;
   hub: StateHub;
   joinInfo: JoinInfo;
   cookieSecret: string;
   logger: FastifyServerOptions['logger'];
+  /** Clock override for tests. */
+  now?: () => number;
 }
 
 export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; io: IoServer }> {

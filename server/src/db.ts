@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import type { Track } from '@shared/types';
+import { mainArtist, songKey } from './lib/tracks.js';
 
 export type Db = DatabaseSync;
 
 /** Each entry runs once, in order; PRAGMA user_version tracks progress. Append only. */
-const MIGRATIONS: string[] = [
+const MIGRATIONS: (string | ((db: Db) => void))[] = [
   `
   CREATE TABLE kv (
     key   TEXT PRIMARY KEY,
@@ -43,6 +45,44 @@ const MIGRATIONS: string[] = [
   ) STRICT;
   CREATE INDEX plays_by_time ON plays(started_at);
   `,
+
+  // v2: cooldowns, fair queue, host login.
+  (db) => {
+    db.exec(`
+      ALTER TABLE queue ADD COLUMN song_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE queue ADD COLUMN artist_id TEXT;
+      -- Fair queue: a guest's n-th waiting song goes into round n, and rounds play in order.
+      ALTER TABLE queue ADD COLUMN round INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE plays ADD COLUMN song_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE plays ADD COLUMN artist_id TEXT;
+      CREATE INDEX queue_by_guest ON queue(guest_id, created_at);
+      CREATE INDEX plays_by_song ON plays(song_key, started_at);
+      CREATE INDEX plays_by_artist ON plays(artist_id, started_at);
+
+      -- The host cleared a cooldown: plays before reset_at no longer count for that key.
+      CREATE TABLE cooldown_resets (
+        kind     TEXT NOT NULL CHECK (kind IN ('song', 'artist')),
+        key      TEXT NOT NULL,
+        reset_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, key)
+      ) STRICT;
+
+      -- Only a SHA-256 of each session token is stored, so a copied database can't be used to log in.
+      CREATE TABLE host_sessions (
+        token_hash TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      ) STRICT;
+    `);
+    for (const table of ['queue', 'plays']) {
+      const update = db.prepare(`UPDATE ${table} SET song_key = ?, artist_id = ? WHERE id = ?`);
+      const rows = db.prepare(`SELECT id, track_json FROM ${table}`).all() as { id: number; track_json: string }[];
+      for (const row of rows) {
+        const track = JSON.parse(row.track_json) as Track;
+        update.run(songKey(track), mainArtist(track)?.id ?? null, row.id);
+      }
+    }
+  },
 ];
 
 export function openDb(file: string): Db {
@@ -56,8 +96,10 @@ function migrate(db: Db): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const current = row?.user_version ?? 0;
   for (let v = current; v < MIGRATIONS.length; v++) {
+    const step = MIGRATIONS[v]!;
     transaction(db, () => {
-      db.exec(MIGRATIONS[v]!);
+      if (typeof step === 'string') db.exec(step);
+      else step(db);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     });
   }

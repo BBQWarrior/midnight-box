@@ -1,5 +1,6 @@
 import type { GuestTag, QueueEntry, Track } from '@shared/types';
 import type { Db } from '../db.js';
+import { mainArtist, songKey } from '../lib/tracks.js';
 
 /**
  * Lifecycle of a request:
@@ -17,6 +18,7 @@ export interface QueueRow {
   requestedBy: GuestTag | null;
   status: QueueRowStatus;
   createdAt: number;
+  round: number;
 }
 
 interface RawRow {
@@ -25,12 +27,13 @@ interface RawRow {
   guest_id: string | null;
   status: QueueRowStatus;
   created_at: number;
+  round: number;
   public_id: string | null;
   name: string | null;
 }
 
 const SELECT = `
-  SELECT q.id, q.track_json, q.guest_id, q.status, q.created_at, g.public_id, g.name
+  SELECT q.id, q.track_json, q.guest_id, q.status, q.created_at, q.round, g.public_id, g.name
   FROM queue q LEFT JOIN guests g ON g.id = q.guest_id`;
 
 export type RemoveResult = 'removed' | 'not_found' | 'locked';
@@ -42,16 +45,16 @@ export class QueueService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** Songs still to play, in play order: the pushed song first, then queued by arrival. */
+  /** Songs still to play, in play order: the pushed song first, then queued ones by round and arrival. */
   upcoming(): QueueRow[] {
     return this.all(
       `${SELECT} WHERE q.status IN ('pushed', 'queued')
-       ORDER BY CASE q.status WHEN 'pushed' THEN 0 ELSE 1 END, q.id`,
+       ORDER BY CASE q.status WHEN 'pushed' THEN 0 ELSE 1 END, q.round, q.id`,
     );
   }
 
   nextQueued(): QueueRow | undefined {
-    return this.one(`${SELECT} WHERE q.status = 'queued' ORDER BY q.id LIMIT 1`);
+    return this.one(`${SELECT} WHERE q.status = 'queued' ORDER BY q.round, q.id LIMIT 1`);
   }
 
   pushed(): QueueRow | undefined {
@@ -70,23 +73,73 @@ export class QueueService {
     return row.n;
   }
 
-  /** True if the track is waiting or playing right now. */
-  isActive(trackId: string): boolean {
+  /** When the guest added songs after `since` (oldest first). Songs the host removed don't count. */
+  addedSince(guestId: string, since: number): number[] {
+    const rows = this.db
+      .prepare(
+        `SELECT created_at FROM queue WHERE guest_id = ? AND created_at > ? AND status != 'removed'
+         ORDER BY created_at`,
+      )
+      .all(guestId, since) as { created_at: number }[];
+    return rows.map((r) => r.created_at);
+  }
+
+  /** True if the same song (any release of it) is waiting or playing right now. */
+  hasSong(key: string): boolean {
     return (
       this.db
-        .prepare(`SELECT 1 FROM queue WHERE track_id = ? AND status IN ('queued', 'pushed', 'playing') LIMIT 1`)
-        .get(trackId) !== undefined
+        .prepare(`SELECT 1 FROM queue WHERE song_key = ? AND status IN ('queued', 'pushed', 'playing') LIMIT 1`)
+        .get(key) !== undefined
     );
   }
 
+  /** True if a song by this main artist is waiting to play. */
+  hasArtistWaiting(artistId: string): boolean {
+    return (
+      this.db
+        .prepare(`SELECT 1 FROM queue WHERE artist_id = ? AND status IN ('queued', 'pushed') LIMIT 1`)
+        .get(artistId) !== undefined
+    );
+  }
+
+  /**
+   * Adds a song. Guests take turns: a guest's next song goes one round after their previous
+   * one, but never into a round that has already been played. So a newcomer's first song
+   * lands ahead of someone else's third.
+   */
   add(track: Track, guestId: string | null): QueueRow {
     const now = this.now();
+    const current = (
+      this.db
+        .prepare(`SELECT COALESCE(MAX(round), 0) AS r FROM queue WHERE status IN ('pushed', 'playing', 'played')`)
+        .get() as { r: number }
+    ).r;
+    let round = current;
+    if (guestId) {
+      const last = (
+        this.db
+          .prepare(`SELECT MAX(round) AS r FROM queue WHERE guest_id = ? AND status != 'removed'`)
+          .get(guestId) as { r: number | null }
+      ).r;
+      if (last !== null) round = Math.max(current, last + 1);
+    }
     const result = this.db
       .prepare(
-        `INSERT INTO queue (track_id, uri, track_json, guest_id, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+        `INSERT INTO queue
+           (track_id, uri, track_json, song_key, artist_id, round, guest_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
       )
-      .run(track.id, track.uri, JSON.stringify(track), guestId, now, now);
+      .run(
+        track.id,
+        track.uri,
+        JSON.stringify(track),
+        songKey(track),
+        mainArtist(track)?.id ?? null,
+        round,
+        guestId,
+        now,
+        now,
+      );
     return this.one(`${SELECT} WHERE q.id = ?`, Number(result.lastInsertRowid))!;
   }
 
@@ -105,6 +158,14 @@ export class QueueService {
     return 'removed';
   }
 
+  /** Removes every song a guest still has waiting in our queue (used when they are banned). */
+  removeQueuedFor(guestId: string): number {
+    const result = this.db
+      .prepare(`UPDATE queue SET status = 'removed', updated_at = ? WHERE guest_id = ? AND status = 'queued'`)
+      .run(this.now(), guestId);
+    return Number(result.changes);
+  }
+
   /** Marks whatever was playing as finished. */
   finishPlaying(): void {
     this.db
@@ -112,10 +173,22 @@ export class QueueService {
       .run(this.now());
   }
 
+  /** Every track that starts playing is recorded, requested or not: it starts the cooldowns. */
   recordPlay(track: Track, queueId: number | null): void {
     this.db
-      .prepare('INSERT INTO plays (track_id, uri, track_json, queue_id, started_at) VALUES (?, ?, ?, ?, ?)')
-      .run(track.id, track.uri, JSON.stringify(track), queueId, this.now());
+      .prepare(
+        `INSERT INTO plays (track_id, uri, track_json, song_key, artist_id, queue_id, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        track.id,
+        track.uri,
+        JSON.stringify(track),
+        songKey(track),
+        mainArtist(track)?.id ?? null,
+        queueId,
+        this.now(),
+      );
   }
 
   /** After a restart nothing is "playing" from our point of view until the player loop sees it. */
@@ -151,5 +224,6 @@ function toRow(raw: RawRow): QueueRow {
     requestedBy: raw.public_id ? { publicId: raw.public_id, name: raw.name ?? 'Guest' } : null,
     status: raw.status,
     createdAt: raw.created_at,
+    round: raw.round,
   };
 }

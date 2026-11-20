@@ -1,7 +1,10 @@
 import type { FastifyRequest } from 'fastify';
+import { isLoopbackIp } from '../lib/net.js';
+import type { HostAuth } from '../services/host-auth.js';
 import { HttpError } from './errors.js';
 
-const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+export const HOST_COOKIE = 'mb_host';
+
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
@@ -11,7 +14,7 @@ const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
  */
 export function clientIp(req: FastifyRequest): string {
   const peer = req.socket.remoteAddress ?? '';
-  if (LOOPBACK_IPS.has(peer)) {
+  if (isLoopbackIp(peer)) {
     const header = req.headers['x-forwarded-for'];
     const hops = (Array.isArray(header) ? header.join(',') : (header ?? ''))
       .split(',')
@@ -33,18 +36,28 @@ function hostnameOf(hostHeader: string | undefined): string | null {
 }
 
 /**
- * True only for requests made on the host machine itself, addressed to a loopback hostname.
- * The Host check also blocks DNS-rebinding attacks and stops the admin panel from leaking
+ * True only for requests made on the host computer itself, addressed to a loopback hostname.
+ * The Host check also blocks DNS-rebinding attacks and stops host-only routes from leaking
  * through a tunnel or reverse proxy that forwards from localhost.
  */
 export function isHostRequest(req: FastifyRequest): boolean {
-  return LOOPBACK_IPS.has(clientIp(req)) && LOOPBACK_HOSTNAMES.has(hostnameOf(req.headers.host) ?? '');
+  return isLoopbackIp(clientIp(req)) && LOOPBACK_HOSTNAMES.has(hostnameOf(req.headers.host) ?? '');
 }
 
+/** For first-run setup and Spotify login, which must happen on the host computer. */
 export async function requireHost(req: FastifyRequest): Promise<void> {
   if (!isHostRequest(req)) {
-    throw new HttpError(403, 'forbidden', 'Admin controls are only available on the host computer.');
+    throw new HttpError(403, 'forbidden', 'This is only available on the host computer.');
   }
+}
+
+/** preHandler for host-panel routes: a valid host session cookie, from any device. */
+export function makeRequireAdmin(auth: HostAuth) {
+  return async (req: FastifyRequest): Promise<void> => {
+    if (!auth.isValid(req.cookies[HOST_COOKIE])) {
+      throw new HttpError(401, 'unauthorized', 'Log in as the host first.');
+    }
+  };
 }
 
 /** Rejects state-changing requests sent from another website (CSRF). */

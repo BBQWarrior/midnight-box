@@ -3,6 +3,12 @@ import os from 'node:os';
 const VIRTUAL_ADAPTER = /vethernet|virtualbox|vmware|wsl|docker|hyper-v|vbox|veth|br-|utun|tailscale|zerotier/i;
 const PRIVATE_IPV4 = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
 
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+export function isLoopbackIp(ip: string): boolean {
+  return LOOPBACK_IPS.has(ip);
+}
+
 /** Best guess at the address phones on the same Wi-Fi can reach this machine on. */
 export function lanAddress(): string {
   const candidates: { name: string; address: string }[] = [];

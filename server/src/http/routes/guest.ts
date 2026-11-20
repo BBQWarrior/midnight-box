@@ -1,16 +1,18 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AddToQueueResponse, Me, SearchResponse, Track } from '@shared/types';
+import type { AddToQueueResponse, Me, Quota, RejectReason, SearchResponse, Track } from '@shared/types';
 import { LruCache } from '../../lib/cache.js';
 import { cleanName, type Guest, NAME_MAX_LENGTH } from '../../services/guests.js';
 import { QueueService } from '../../services/queue.js';
 import { HttpError } from '../errors.js';
+import { clientIp } from '../security.js';
 import type { AppDeps } from '../app.js';
 
 const COOKIE = 'mb_guest';
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 30;
 const PAGE_SIZE = 10; // Spotify Development Mode caps search at 10 results per page
 const MAX_OFFSET = 990;
+const BANNED_MESSAGE = 'The host removed you from this party.';
 
 const NameBody = z.object({ name: z.string().max(200) });
 const SearchQuery = z.object({
@@ -19,26 +21,40 @@ const SearchQuery = z.object({
 });
 const TrackId = z.string().min(1).max(64).regex(/^[A-Za-z0-9:_-]+$/, 'Invalid track id');
 
+interface RawPage {
+  tracks: Track[];
+  nextOffset: number | null;
+}
+
 export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { guests, queue, provider, player, hub, config, joinInfo } = deps;
+  const { guests, queue, cooldowns, provider, player, hub, config, joinInfo } = deps;
+  const now = deps.now ?? Date.now;
+  const { limits } = config;
+  const windowMs = limits.windowMinutes * 60_000;
   const tracks = new LruCache<string, Track>(5_000);
-  const searches = new LruCache<string, SearchResponse>(300, 60_000);
+  const searches = new LruCache<string, RawPage>(300, 60_000);
 
   const AddBody = z.object({
-    trackIds: z.array(TrackId).min(1).max(config.limits.maxPerRequest),
+    trackIds: z.array(TrackId).min(1).max(limits.maxPerRequest),
   });
 
+  /** Reads the session cookie. Throws if the guest or their address is banned. */
   function readGuest(req: FastifyRequest): Guest | undefined {
+    const ip = clientIp(req);
+    if (guests.isIpBanned(ip)) throw new HttpError(403, 'forbidden', BANNED_MESSAGE);
     const raw = req.cookies[COOKIE];
     if (!raw) return undefined;
     const unsigned = req.unsignCookie(raw);
-    return unsigned.valid && unsigned.value ? guests.get(unsigned.value) : undefined;
+    const guest = unsigned.valid && unsigned.value ? guests.get(unsigned.value) : undefined;
+    if (!guest) return undefined;
+    if (guest.banned) throw new HttpError(403, 'forbidden', BANNED_MESSAGE);
+    guests.seen(guest, ip);
+    return guest;
   }
 
   function requireGuest(req: FastifyRequest): Guest {
     const guest = readGuest(req);
     if (!guest) throw new HttpError(400, 'name_required', 'Your session expired. Reload the page.');
-    if (guest.banned) throw new HttpError(403, 'forbidden', 'The host removed you from this party.');
     return guest;
   }
 
@@ -48,10 +64,31 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
   }
 
-  const toMe = (g: Guest): Me => ({ publicId: g.publicId, name: g.name });
+  const quotaFor = (guestId: string): Quota => ({
+    pending: queue.pendingCountFor(guestId),
+    recentAdds: queue.addedSince(guestId, now() - windowMs),
+  });
+
+  /** Checks the per-guest limits against the database, so parallel requests can't overshoot them. */
+  function limitFor(guestId: string): { reason: RejectReason; availableAt: number | null } | null {
+    const { pending, recentAdds } = quotaFor(guestId);
+    if (pending >= limits.maxPendingPerGuest) return { reason: 'limit_reached', availableAt: null };
+    if (recentAdds.length >= limits.windowSongs) {
+      // A slot frees up when the oldest add that still counts leaves the window.
+      return { reason: 'too_soon', availableAt: recentAdds[recentAdds.length - limits.windowSongs]! + windowMs };
+    }
+    return null;
+  }
+
+  const playingTrack = () => player.playback.state?.track ?? null;
+  const toMe = (g: Guest): Me => ({ publicId: g.publicId, name: g.name, quota: quotaFor(g.id) });
 
   app.get('/api/me', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const guest = readGuest(req) ?? guests.create();
+    let guest = readGuest(req);
+    if (!guest) {
+      guest = guests.create();
+      guests.seen(guest, clientIp(req));
+    }
     reply.setCookie(COOKIE, guest.id, {
       signed: true,
       httpOnly: true,
@@ -85,17 +122,20 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
     const { q, offset } = SearchQuery.parse(req.query);
 
     const key = `${q.toLowerCase()}|${offset}`;
-    const cached = searches.get(key);
-    if (cached) return cached;
-
-    const result = await provider.search(q, offset, PAGE_SIZE);
-    for (const t of result.tracks) tracks.set(t.id, t);
-    const next = offset + PAGE_SIZE;
+    let page = searches.get(key);
+    if (!page) {
+      const result = await provider.search(q, offset, PAGE_SIZE);
+      for (const t of result.tracks) tracks.set(t.id, t);
+      const next = offset + PAGE_SIZE;
+      page = { tracks: result.tracks, nextOffset: next < result.total && next <= MAX_OFFSET ? next : null };
+      searches.set(key, page);
+    }
+    // Availability changes with every play, so it's worked out per request, never cached.
+    const playing = playingTrack();
     const response: SearchResponse = {
-      tracks: result.tracks,
-      nextOffset: next < result.total && next <= MAX_OFFSET ? next : null,
+      results: page.tracks.map((track) => ({ track, block: cooldowns.blockFor(track, playing) })),
+      nextOffset: page.nextOffset,
     };
-    searches.set(key, response);
     return response;
   });
 
@@ -105,37 +145,39 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
     requireProvider();
     const { trackIds } = AddBody.parse(req.body);
 
-    const response: AddToQueueResponse = { added: [], rejected: [] };
-    const seen = new Set<string>();
-    const nowPlayingId = player.playback.state?.track?.id;
-    let pending = queue.pendingCountFor(guest.id);
+    const added: AddToQueueResponse['added'] = [];
+    const rejected: AddToQueueResponse['rejected'] = [];
 
-    for (const trackId of trackIds) {
-      if (seen.has(trackId) || trackId === nowPlayingId || queue.isActive(trackId)) {
-        response.rejected.push({ trackId, reason: 'already_queued' });
-        continue;
-      }
-      seen.add(trackId);
-      if (pending >= config.limits.maxPendingPerGuest) {
-        response.rejected.push({ trackId, reason: 'limit_reached' });
+    for (const trackId of new Set(trackIds)) {
+      // Cheap check first, so a guest at their limit doesn't cost a provider lookup.
+      const early = limitFor(guest.id);
+      if (early) {
+        rejected.push({ trackId, ...early });
         continue;
       }
       // Never trust track details from the client: use what the provider told us.
       const track = tracks.get(trackId) ?? (await provider.getTrack(trackId));
       if (!track) {
-        response.rejected.push({ trackId, reason: 'not_found' });
+        rejected.push({ trackId, reason: 'not_found', availableAt: null });
         continue;
       }
       tracks.set(track.id, track);
-      response.added.push(QueueService.toEntry(queue.add(track, guest.id)));
-      pending++;
+      // Re-check after the await, with nothing async before the insert: another request may
+      // have added songs in the meantime.
+      const blocked = limitFor(guest.id) ?? cooldowns.blockFor(track, playingTrack());
+      if (blocked) {
+        rejected.push({ trackId, reason: blocked.reason, availableAt: blocked.availableAt });
+        continue;
+      }
+      added.push(QueueService.toEntry(queue.add(track, guest.id)));
     }
 
-    if (response.added.length > 0) {
-      req.log.info(`${guest.name} queued ${response.added.map((e) => `"${e.track.name}"`).join(', ')}`);
+    if (added.length > 0) {
+      req.log.info(`${guest.name} queued ${added.map((e) => `"${e.track.name}"`).join(', ')}`);
       player.poke();
       hub.broadcast();
     }
+    const response: AddToQueueResponse = { added, rejected, quota: quotaFor(guest.id) };
     return response;
   });
 }

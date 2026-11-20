@@ -22,6 +22,10 @@ const EnvSchema = z.object({
   ),
   MAX_PENDING_PER_GUEST: int(3, 1, 50),
   MAX_PER_REQUEST: int(3, 1, 10),
+  GUEST_WINDOW_SONGS: int(2, 1, 50),
+  GUEST_WINDOW_MINUTES: int(20, 1, 24 * 60),
+  SONG_COOLDOWN_MINUTES: int(120, 0, 7 * 24 * 60),
+  ARTIST_COOLDOWN_MINUTES: int(20, 0, 7 * 24 * 60),
   DATA_DIR: optional(z.string()),
 });
 
@@ -30,6 +34,8 @@ export interface Config {
   dev: boolean;
   /** Started with --demo: fake music provider, no Spotify needed. */
   demo: boolean;
+  /** Started with --reset-host-password: clear the host password and exit. */
+  resetHostPassword: boolean;
   port: number;
   host: string;
   /** Explicit URL for the QR code; otherwise derived from the LAN IP. */
@@ -47,6 +53,7 @@ export class ConfigError extends Error {}
 export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
   const dev = argv.includes('--dev');
   const demo = argv.includes('--demo');
+  const resetHostPassword = argv.includes('--reset-host-password');
 
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
@@ -54,7 +61,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
   }
   const e = parsed.data;
 
-  if (!demo && !e.SPOTIFY_CLIENT_ID) {
+  if (!demo && !resetHostPassword && !e.SPOTIFY_CLIENT_ID) {
     throw new ConfigError(
       'SPOTIFY_CLIENT_ID is not set. Copy .env.example to .env and add your Spotify app Client ID,\n' +
         'or try Midnight Box without Spotify: npm run demo',
@@ -64,6 +71,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
   return {
     dev,
     demo,
+    resetHostPassword,
     port: e.PORT,
     host: e.HOST,
     publicUrl: e.PUBLIC_URL,
@@ -78,6 +86,10 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
     limits: {
       maxPendingPerGuest: e.MAX_PENDING_PER_GUEST,
       maxPerRequest: Math.min(e.MAX_PER_REQUEST, e.MAX_PENDING_PER_GUEST),
+      windowSongs: e.GUEST_WINDOW_SONGS,
+      windowMinutes: e.GUEST_WINDOW_MINUTES,
+      songCooldownMinutes: e.SONG_COOLDOWN_MINUTES,
+      artistCooldownMinutes: e.ARTIST_COOLDOWN_MINUTES,
     },
     dataDir: path.resolve(ROOT_DIR, e.DATA_DIR ?? 'data'),
     clientDistDir: path.join(ROOT_DIR, 'client', 'dist'),
