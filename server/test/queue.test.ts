@@ -30,7 +30,7 @@ function setup() {
   const advance = (ms: number) => {
     t += ms;
   };
-  return { queue, add, order, playNext, advance };
+  return { db, queue, add, order, playNext, advance };
 }
 
 describe('fair queue', () => {
@@ -78,5 +78,44 @@ describe('fair queue', () => {
 
     queue.remove(first);
     expect(queue.addedSince('ana', T0 - 1)).toEqual([T0 + 60_000]);
+  });
+});
+
+describe('history clean-up', () => {
+  const HOUR = 60 * 60_000;
+  const count = (db: ReturnType<typeof openDb>, table: string) =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  it('deletes old plays and requests, but keeps waiting songs and the round the party reached', () => {
+    const { db, queue, add, order, playNext, advance } = setup();
+    add('ana');
+    add('ana');
+    add('ana');
+    add('ben');
+    add('ben');
+    playNext(); // ana1
+    playNext(); // ben1
+    playNext(); // ana2: round 1 is playing
+    queue.recordPlay(MOCK_CATALOG[0]!, null);
+
+    advance(3 * HOUR);
+    queue.prune(T0 + HOUR);
+    expect(count(db, 'plays')).toBe(0);
+    expect(order()).toEqual(['ben2', 'ana3']);
+
+    // The played rounds are gone, but a newcomer still joins round 1 instead of jumping the queue.
+    add('cy');
+    expect(order()).toEqual(['ben2', 'cy1', 'ana3']);
+  });
+
+  it('keeps recent history', () => {
+    const { db, queue, add, playNext, advance } = setup();
+    add('ana');
+    playNext();
+    queue.recordPlay(MOCK_CATALOG[0]!, null);
+    advance(HOUR);
+    queue.prune(T0 - 1);
+    expect(count(db, 'plays')).toBe(1);
+    expect(count(db, 'queue')).toBe(1);
   });
 });

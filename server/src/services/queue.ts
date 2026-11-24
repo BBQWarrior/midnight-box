@@ -1,6 +1,9 @@
 import type { GuestTag, QueueEntry, Track } from '@shared/types';
-import type { Db } from '../db.js';
+import { type Db, kvGet, kvSet, transaction } from '../db.js';
 import { mainArtist, songKey } from '../lib/tracks.js';
+
+/** The fair-queue round reached so far, kept when the history that recorded it is deleted. */
+const ROUND_FLOOR_KEY = 'queue_round_floor';
 
 /**
  * Lifecycle of a request:
@@ -123,11 +126,7 @@ export class QueueService {
    */
   add(track: Track, guestId: string | null, source: QueueSource = 'guest'): QueueRow {
     const now = this.now();
-    const current = (
-      this.db
-        .prepare(`SELECT COALESCE(MAX(round), 0) AS r FROM queue WHERE status IN ('pushed', 'playing', 'played')`)
-        .get() as { r: number }
-    ).r;
+    const current = this.currentRound();
     let round = current;
     const owner =
       source === 'vote'
@@ -181,6 +180,38 @@ export class QueueService {
       .prepare(`UPDATE queue SET status = 'removed', updated_at = ? WHERE guest_id = ? AND status = 'queued'`)
       .run(this.now(), guestId);
     return Number(result.changes);
+  }
+
+  /**
+   * Deletes history older than `before`: plays, finished or removed requests, and cooldown resets.
+   * Spotify's terms don't allow keeping their content indefinitely, so only what cooldowns and
+   * limits still need is kept. Songs waiting or playing are never touched.
+   */
+  prune(before: number): void {
+    transaction(this.db, () => {
+      kvSet(this.db, ROUND_FLOOR_KEY, String(this.currentRound()));
+      this.db.prepare('DELETE FROM plays WHERE started_at < ?').run(before);
+      this.db
+        .prepare(
+          `DELETE FROM queue WHERE status IN ('played', 'removed') AND updated_at < ?
+             AND id NOT IN (SELECT queue_id FROM plays WHERE queue_id IS NOT NULL)`,
+        )
+        .run(before);
+      this.db.prepare('DELETE FROM cooldown_resets WHERE reset_at < ?').run(before);
+    });
+  }
+
+  /** Deletes all listening history (the host disconnected Spotify). */
+  forgetHistory(): void {
+    this.prune(Number.MAX_SAFE_INTEGER);
+  }
+
+  /** The round now playing: a new guest's first song joins it. */
+  private currentRound(): number {
+    const row = this.db
+      .prepare(`SELECT COALESCE(MAX(round), 0) AS r FROM queue WHERE status IN ('pushed', 'playing', 'played')`)
+      .get() as { r: number };
+    return Math.max(row.r, Number(kvGet(this.db, ROUND_FLOOR_KEY) ?? 0));
   }
 
   /** Marks whatever was playing as finished. */

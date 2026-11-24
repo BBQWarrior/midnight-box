@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AddToQueueResponse,
   AdminStatus,
+  CooldownList,
   HostSession,
   Limits,
   Me,
@@ -12,11 +13,12 @@ import type {
   SearchResponse,
 } from '@shared/types';
 import type { Config } from '../src/config.js';
-import { openDb } from '../src/db.js';
+import { type Db, kvSet, openDb } from '../src/db.js';
 import { buildApp } from '../src/http/app.js';
 import { MOCK_CATALOG } from '../src/providers/mock/catalog.js';
 import { MockProvider } from '../src/providers/mock/provider.js';
 import { MockSuggestions } from '../src/providers/mock/suggestions.js';
+import { SpotifyAuth } from '../src/providers/spotify/auth.js';
 import { CooldownService } from '../src/services/cooldowns.js';
 import { GuestService } from '../src/services/guests.js';
 import { HostAuth } from '../src/services/host-auth.js';
@@ -62,15 +64,24 @@ let app: FastifyInstance;
 let advance: (ms: number) => void;
 let player: Player;
 let votes: VoteService;
+let db: Db;
+let spotifyAuth: SpotifyAuth | null;
+const REDIRECT = 'http://127.0.0.1:8080/auth/spotify/callback';
 
-async function makeApp(limits: Partial<Limits> = {}) {
+async function makeApp(limits: Partial<Limits> = {}, withSpotify = false) {
   let t = T0;
   const now = () => t;
   advance = (ms) => {
     t += ms;
   };
   const config = { ...baseConfig, limits: { ...baseConfig.limits, ...limits } };
-  const db = openDb(':memory:');
+  db = openDb(':memory:');
+  spotifyAuth = null;
+  if (withSpotify) {
+    // A host who connected Spotify earlier: the tokens are already saved.
+    kvSet(db, 'spotify_tokens', JSON.stringify({ accessToken: 'a', refreshToken: 'r', expiresAt: T0 + 3_600_000 }));
+    spotifyAuth = new SpotifyAuth(db, 'test-client-id', REDIRECT);
+  }
   const provider = new MockProvider({ startPlaying: true, now });
   const queue = new QueueService(db, now);
   const guests = new GuestService(db, now);
@@ -108,7 +119,7 @@ async function makeApp(limits: Partial<Limits> = {}) {
   ({ app } = await buildApp({
     config,
     provider,
-    spotifyAuth: null,
+    spotifyAuth,
     guests,
     queue,
     cooldowns,
@@ -550,6 +561,27 @@ describe('vote to skip', () => {
     const ban = `/api/admin/guests/${me.json<Me>().publicId}/ban`;
     await app.inject({ method: 'POST', url: ban, cookies: host, payload: {} });
     expect((await state()).skip.votes).toBe(0);
+  });
+});
+
+describe('Spotify disconnect', () => {
+  it('deletes the saved login and listening history, and needs a host session', async () => {
+    await makeApp({}, true);
+    const host = await setUpHost();
+    await player.tick(); // the song playing is recorded, so it's on cooldown
+    const cooldowns = async () =>
+      (await app.inject({ method: 'GET', url: '/api/admin/cooldowns', cookies: host })).json<CooldownList>();
+    expect((await cooldowns()).songs).toHaveLength(1);
+
+    const disconnect = (cookies?: Record<string, string>) =>
+      app.inject({ method: 'POST', url: '/api/admin/spotify/disconnect', cookies, payload: {} });
+    expect((await disconnect()).statusCode).toBe(401);
+    expect(spotifyAuth?.isConnected()).toBe(true);
+
+    expect((await disconnect(host)).statusCode).toBe(204);
+    expect(spotifyAuth?.isConnected()).toBe(false);
+    expect(new SpotifyAuth(db, 'test-client-id', REDIRECT).isConnected()).toBe(false);
+    expect((await cooldowns()).songs).toHaveLength(0);
   });
 });
 

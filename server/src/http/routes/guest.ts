@@ -42,7 +42,8 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
   const now = deps.now ?? Date.now;
   const { limits } = config;
   const windowMs = limits.windowMinutes * 60_000;
-  const tracks = new LruCache<string, Track>(5_000);
+  // Temporary only: Spotify allows caching their content just to keep the app responsive.
+  const tracks = new LruCache<string, Track>(5_000, 60 * 60_000);
   const searches = new LruCache<string, RawPage>(300, 60_000);
 
   const AddBody = z.object({

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { SpotifyAuth } from '../../providers/spotify/auth.js';
-import { HOST_COOKIE, requireHost } from '../security.js';
+import { HOST_COOKIE, makeRequireAdmin, requireHost } from '../security.js';
 import type { AppDeps } from '../app.js';
 
 const CallbackQuery = z.object({
@@ -15,7 +15,7 @@ const CallbackQuery = z.object({
  * starting it needs a host session. The callback is protected by the single-use `state`.
  */
 export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps, auth: SpotifyAuth): void {
-  const { player, hub, config, hostAuth } = deps;
+  const { player, hub, config, hostAuth, queue } = deps;
   const adminUrl = config.dev ? `http://127.0.0.1:${config.uiPort}/admin` : '/admin';
   const opts = { preHandler: requireHost, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } };
 
@@ -37,4 +37,19 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps, auth: Sp
     hub.broadcast();
     return reply.redirect(`${adminUrl}?spotify=connected`);
   });
+
+  // Spotify's terms: the host must be able to disconnect at any time, and their Spotify data is
+  // deleted with it. Works from any device with a host session, unlike connecting.
+  app.post(
+    '/api/admin/spotify/disconnect',
+    { preHandler: makeRequireAdmin(hostAuth), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      auth.disconnect();
+      queue.forgetHistory();
+      req.log.info('Spotify disconnected: the saved login and listening history were deleted');
+      player.poke();
+      hub.broadcast();
+      return reply.status(204).send();
+    },
+  );
 }

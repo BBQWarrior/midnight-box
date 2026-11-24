@@ -121,6 +121,14 @@ async function main(): Promise<void> {
   player.start();
   votes.start();
 
+  // Keep only the history that cooldowns and limits still need: Spotify's terms forbid storing
+  // their content indefinitely.
+  const { limits } = config;
+  const historyMs = Math.max(limits.songCooldownMinutes, limits.artistCooldownMinutes, limits.windowMinutes) * 60_000;
+  const prune = () => queue.prune(Date.now() - historyMs);
+  prune();
+  const pruneTimer = setInterval(prune, 10 * 60_000);
+
   const adminUrl = `http://127.0.0.1:${config.uiPort}/admin`;
   const qr = await QRCode.toString(joinUrl, { type: 'terminal', small: true });
   console.log(
@@ -145,6 +153,7 @@ async function main(): Promise<void> {
     closing = true;
     player.stop();
     votes.stop();
+    clearInterval(pruneTimer);
     await app.close();
     db.close();
     process.exit(0);
