@@ -9,6 +9,7 @@ import { useOnNew } from '../hooks/useOnNew';
 import { useSecondsLeft } from '../hooks/useSecondsLeft';
 import { Badge } from '../components/Badge';
 import { Cover } from '../components/Cover';
+import { CoverLink, OpenSpotifyLink, SpotifyLogo } from '../components/Spotify';
 
 const UP_NEXT = 5;
 const ANNOUNCE_MS = 6000;
@@ -77,13 +78,13 @@ function useWakeLock(): void {
 
 const artistsOf = (names: { name: string }[]): string => names.map((a) => a.name).join(', ');
 
-function QueueRow({ entry }: { entry: QueueEntry }) {
+function QueueRow({ entry, spotify }: { entry: QueueEntry; spotify: boolean }) {
   return (
     <li className="flex items-center gap-[1vw]">
-      <Cover track={entry.track} className="size-[4.2vh] min-w-[4.2vh] rounded-[0.6vh]" iconSize={16} />
+      <CoverLink track={entry.track} spotify={spotify} className="size-[4.2vh] min-w-[4.2vh]" iconSize={16} rounded="rounded-lg" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[2vh] font-medium leading-tight">{entry.track.name}</p>
-        <p className="truncate text-[1.6vh] leading-tight text-white/60">{artistsOf(entry.track.artists)}</p>
+        <p className="truncate text-[2vh] font-medium leading-tight" title={entry.track.name}>{entry.track.name}</p>
+        <p className="truncate text-[1.6vh] leading-tight text-white/60" title={artistsOf(entry.track.artists)}>{artistsOf(entry.track.artists)}</p>
       </div>
       <span className="max-w-[35%] shrink-0 truncate text-[1.6vh] text-violet-200">
         {entry.votePick ? 'Vote pick' : (entry.requestedBy?.name ?? '')}
@@ -92,7 +93,7 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
   );
 }
 
-function VotePanel({ round, skewMs }: { round: VoteRound; skewMs: number }) {
+function VotePanel({ round, skewMs, spotify }: { round: VoteRound; skewMs: number; spotify: boolean }) {
   const secondsLeft = useSecondsLeft(round.endsAt, skewMs);
   const total = round.candidates.reduce((sum, c) => sum + c.votes, 0);
   return (
@@ -113,10 +114,10 @@ function VotePanel({ round, skewMs }: { round: VoteRound; skewMs: number }) {
                 style={{ width: `${pct}%` }}
               />
               <div className="relative flex items-center gap-[1.2vw] p-[1vh]">
-                <Cover track={c.track} className="size-[6vh] min-w-[6vh] rounded-[0.8vh]" iconSize={22} />
+                <CoverLink track={c.track} spotify={spotify} className="size-[6vh] min-w-[6vh]" iconSize={22} rounded="rounded-lg" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[2.4vh] font-medium leading-tight">{c.track.name}</p>
-                  <p className="truncate text-[1.8vh] leading-tight text-white/70">{c.track.artists[0]?.name}</p>
+                  <p className="truncate text-[2.4vh] font-medium leading-tight" title={c.track.name}>{c.track.name}</p>
+                  <p className="truncate text-[1.8vh] leading-tight text-white/70" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
                 </div>
                 <span className="shrink-0 text-[2.6vh] font-bold tabular-nums">{c.votes}</span>
               </div>
@@ -186,6 +187,7 @@ export function TvPage() {
   const track = nowPlaying?.track ?? null;
   const pct = track && track.durationMs > 0 ? (elapsed / track.durationMs) * 100 : 0;
   const skip = state?.skip;
+  const spotify = state !== null && !state.demoMode;
 
   return (
     <div className={`relative flex h-dvh w-screen flex-col overflow-hidden p-[3vh] ${idle ? 'cursor-none' : ''}`}>
@@ -194,6 +196,7 @@ export function TvPage() {
           Midnight Box
         </h1>
         <div className="flex items-center gap-[1.5vh]">
+          {spotify && <SpotifyLogo tv />}
           {!connected && (
             <span role="status" className="flex items-center gap-[0.8vh] text-[1.8vh] text-amber-200/80">
               <WifiOff size={16} aria-hidden="true" /> Reconnecting…
@@ -229,15 +232,16 @@ export function TvPage() {
                 <Cover
                   track={track}
                   // Square, and small enough to leave room for the vote panel while a round runs.
-                  className={`${round ? 'size-[min(28vw,34vh)]' : 'size-[min(30vw,58vh)]'} rounded-[2vh] shadow-2xl ${nowPlaying.isPlaying ? '' : 'opacity-60'}`}
+                  className={`${round ? 'size-[min(28vw,34vh)]' : 'size-[min(30vw,58vh)]'} shadow-2xl`}
+                  rounded="rounded-lg"
                   iconSize={96}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-[2.2vh] font-medium uppercase tracking-widest text-glow">
                     {nowPlaying.isPlaying ? 'Now playing' : 'Paused'}
                   </p>
-                  <h2 className="mt-[1vh] line-clamp-2 text-[6.5vh] font-bold leading-tight">{track.name}</h2>
-                  <p className="mt-[1vh] truncate text-[3.6vh] text-white/70">{artistsOf(track.artists)}</p>
+                  <h2 className="mt-[1vh] line-clamp-2 text-[6.5vh] font-bold leading-tight" title={track.name}>{track.name}</h2>
+                  <p className="mt-[1vh] truncate text-[3.6vh] text-white/70" title={artistsOf(track.artists)}>{artistsOf(track.artists)}</p>
                   <div className="mt-[2vh] flex flex-wrap items-center gap-[1.5vh]">
                     {nowPlaying.votePick && (
                       <span className="text-[2vh]">
@@ -249,6 +253,7 @@ export function TvPage() {
                         Requested by {nowPlaying.requestedBy.name}
                       </span>
                     )}
+                    {spotify && <OpenSpotifyLink track={track} className="text-[2.2vh]" />}
                     {skip && skip.enabled && skip.votes > 0 && skip.trackId === track.id && (
                       <span className="rounded-full border border-rose-300/30 bg-rose-400/10 px-[1.5vh] py-[0.6vh] text-[2.2vh] tabular-nums text-rose-100">
                         Skip votes {skip.votes}/{skip.needed}
@@ -275,7 +280,7 @@ export function TvPage() {
               </>
             )}
           </section>
-          {round && <VotePanel round={round} skewMs={skewMs} />}
+          {round && <VotePanel round={round} skewMs={skewMs} spotify={spotify} />}
         </main>
 
         <aside className="flex w-[26vw] shrink-0 flex-col gap-[2.5vh]">
@@ -301,7 +306,7 @@ export function TvPage() {
               <>
                 <ul className="flex flex-col gap-[1.4vh]">
                   {queue.slice(0, UP_NEXT).map((e) => (
-                    <QueueRow key={e.id} entry={e} />
+                    <QueueRow key={e.id} entry={e} spotify={spotify} />
                   ))}
                 </ul>
                 {queue.length > UP_NEXT && (

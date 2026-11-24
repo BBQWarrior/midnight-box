@@ -6,6 +6,7 @@ import { useLiveState } from '../hooks/useLiveState';
 import { formatClock } from '../lib/format';
 import { useSecondsLeft } from '../hooks/useSecondsLeft';
 import { QueueList } from '../components/QueueList';
+import { ExtLink, SpotifyLogo, artistUrl, trackUrl } from '../components/Spotify';
 import { useToast } from '../components/Toast';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -122,6 +123,11 @@ function PasswordForm({ mode, warnUnencrypted = false, onDone }: PasswordFormPro
       <button type="submit" disabled={busy || !password} className={`${primaryBtn} mt-4 w-full`}>
         {busy ? 'Please wait…' : setup ? 'Set password' : 'Log in'}
       </button>
+      <p className="mt-4 text-center text-xs text-white/50">
+        <a href="/privacy" className="underline underline-offset-2">
+          Privacy
+        </a>
+      </p>
     </form>
   );
 }
@@ -190,6 +196,9 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [join, setJoin] = useState<JoinInfo | null>(null);
   const [copied, setCopied] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnected, setDisconnected] = useState(false);
   const nowPlayingId = state?.nowPlaying?.track.id ?? null;
   const secondsLeft = useSecondsLeft(state?.vote.round?.endsAt ?? null, skewMs);
 
@@ -241,6 +250,21 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
     setRemovingId(null);
   };
 
+  const disconnect = async (): Promise<void> => {
+    setDisconnecting(true);
+    try {
+      await api.disconnectSpotify();
+      setConfirmDisconnect(false);
+      setDisconnected(true);
+      await refresh();
+    } catch (err) {
+      if (isUnauthorized(err)) onLoggedOut();
+      else toast.show(errorMessage(err), 'error');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await api.adminLogout();
@@ -261,6 +285,7 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
     }
   };
 
+  const spotify = status ? status.provider === 'spotify' : state ? !state.demoMode : false;
   const smallBtn = 'min-h-9 shrink-0 rounded-full border border-white/15 px-4 text-xs font-semibold';
   const rowClass = 'flex items-center justify-between gap-3 rounded-2xl border border-white/10 p-3';
   const subhead = 'mb-2 text-xs font-semibold uppercase tracking-wider text-white/50';
@@ -301,6 +326,44 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
               ) : (
                 <p className="text-sm text-white/60">Connect Spotify from the host computer</p>
               ))}
+            {status.provider === 'spotify' && status.connected && !confirmDisconnect && (
+              <button type="button" className={btn} onClick={() => setConfirmDisconnect(true)}>
+                Disconnect Spotify
+              </button>
+            )}
+            {confirmDisconnect && (
+              <div className="w-full rounded-2xl border border-rose-300/25 bg-rose-400/10 p-3">
+                <p className="text-sm text-rose-100">
+                  Deletes the saved Spotify login and listening history from this computer.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={disconnecting}
+                    className="min-h-11 rounded-full border border-rose-400/40 bg-rose-500/20 px-5 text-sm font-semibold text-rose-100 disabled:opacity-50"
+                    onClick={() => void disconnect()}
+                  >
+                    {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                  </button>
+                  <button type="button" disabled={disconnecting} className={btn} onClick={() => setConfirmDisconnect(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {disconnected && (
+              <p className="w-full text-sm text-white/70">
+                To also remove Midnight Box&apos;s access on Spotify&apos;s side, remove it at{' '}
+                <ExtLink href="https://www.spotify.com/account/apps/" className="underline underline-offset-2">
+                  spotify.com/account/apps
+                </ExtLink>
+              </p>
+            )}
+            <p className="w-full text-xs text-white/50">
+              <a href="/privacy" className="underline underline-offset-2">
+                Privacy
+              </a>
+            </p>
           </div>
         ) : (
           <p className="text-white/60">Loading…</p>
@@ -361,7 +424,13 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
       </Section>
 
       <Section title="Queue">
+        {spotify && (
+          <div className="-ml-3 -mt-3">
+            <SpotifyLogo />
+          </div>
+        )}
         <QueueList
+          spotify={spotify}
           queue={state?.queue ?? []}
           onRemove={(e) => void remove(e)}
           removingId={removingId}
@@ -413,8 +482,16 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
                   {state.vote.round.candidates.map((c) => (
                     <li key={c.track.id} className={rowClass}>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{c.track.name}</p>
-                        <p className="truncate text-xs text-white/50">{c.track.artists[0]?.name}</p>
+                        <p className="truncate text-sm font-medium" title={c.track.name}>
+                          {spotify ? (
+                            <ExtLink href={trackUrl(c.track)} className="hover:underline">
+                              {c.track.name}
+                            </ExtLink>
+                          ) : (
+                            c.track.name
+                          )}
+                        </p>
+                        <p className="truncate text-xs text-white/50" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
                       </div>
                       <span className="shrink-0 text-sm tabular-nums text-white/80">
                         {c.votes} {c.votes === 1 ? 'vote' : 'votes'}
@@ -502,8 +579,16 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
                   {cooldowns.songs.map((c) => (
                     <li key={c.key} className={rowClass}>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{c.track.name}</p>
-                        <p className="truncate text-xs text-white/50">
+                        <p className="truncate text-sm font-medium" title={c.track.name}>
+                          {spotify ? (
+                            <ExtLink href={trackUrl(c.track)} className="hover:underline">
+                              {c.track.name}
+                            </ExtLink>
+                          ) : (
+                            c.track.name
+                          )}
+                        </p>
+                        <p className="truncate text-xs text-white/50" title={c.track.artists.map((a) => a.name).join(', ')}>
                           {c.track.artists.map((a) => a.name).join(', ')} · until {formatClock(c.until)}
                         </p>
                       </div>
@@ -526,7 +611,15 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
                   {cooldowns.artists.map((c) => (
                     <li key={c.key} className={rowClass}>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{c.artist.name}</p>
+                        <p className="truncate text-sm font-medium" title={c.artist.name}>
+                          {spotify ? (
+                            <ExtLink href={artistUrl(c.artist.id)} className="hover:underline">
+                              {c.artist.name}
+                            </ExtLink>
+                          ) : (
+                            c.artist.name
+                          )}
+                        </p>
                         <p className="text-xs text-white/50">until {formatClock(c.until)}</p>
                       </div>
                       <button

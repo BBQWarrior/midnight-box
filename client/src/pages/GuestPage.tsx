@@ -12,6 +12,7 @@ import { useOnNew } from '../hooks/useOnNew';
 import { QueueList } from '../components/QueueList';
 import { VoteCard } from '../components/VoteCard';
 import { SearchPanel } from '../components/SearchPanel';
+import { SpotifyLogo } from '../components/Spotify';
 
 type Tab = 'queue' | 'add';
 
@@ -113,7 +114,14 @@ export function GuestPage() {
         </div>
       )}
 
+      {!state.demoMode && (
+        <div className="-mb-3 -mt-3 -ml-3">
+          <SpotifyLogo />
+        </div>
+      )}
+
       <NowPlayingCard
+        spotify={!state.demoMode}
         nowPlaying={state.nowPlaying}
         skewMs={skewMs}
         action={
@@ -136,8 +144,8 @@ export function GuestPage() {
 
       <main className="pb-8">
         <div hidden={tab !== 'queue'}>
-          <VoteCard vote={state.vote} skewMs={skewMs} onForbidden={markBanned} />
-          <QueueList queue={state.queue} myPublicId={me.publicId} onAddSongs={() => setTab('add')} />
+          <VoteCard spotify={!state.demoMode} vote={state.vote} skewMs={skewMs} onForbidden={markBanned} />
+          <QueueList spotify={!state.demoMode} queue={state.queue} myPublicId={me.publicId} onAddSongs={() => setTab('add')} />
         </div>
         <div hidden={tab !== 'add'}>
           <SearchPanel
@@ -151,6 +159,12 @@ export function GuestPage() {
           />
         </div>
       </main>
+
+      <footer className="pb-6 text-center text-xs text-white/40">
+        <a href="/privacy" className="inline-flex min-h-11 items-center underline underline-offset-2">
+          Privacy
+        </a>
+      </footer>
     </div>
   );
 }

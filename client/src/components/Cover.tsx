@@ -6,16 +6,19 @@ interface Props {
   track: Track;
   className?: string;
   iconSize?: number;
+  /** Corner radius class: 4px by default (8px on the TV). */
+  rounded?: string;
 }
 
-export function Cover({ track, className = 'size-12', iconSize = 20 }: Props) {
+// Spotify art is square: keep the box square and never overlay, dim or crop it.
+export function Cover({ track, className = 'size-12', iconSize = 20, rounded = 'rounded-[4px]' }: Props) {
   if (track.imageUrl) {
     return (
       <img
         src={track.imageUrl}
         alt=""
         loading="lazy"
-        className={`${className} shrink-0 rounded-lg bg-white/5 object-cover`}
+        className={`${className} shrink-0 ${rounded} bg-white/5 object-cover`}
       />
     );
   }
@@ -25,7 +28,7 @@ export function Cover({ track, className = 'size-12', iconSize = 20 }: Props) {
   return (
     <div
       aria-hidden="true"
-      className={`${className} flex shrink-0 items-center justify-center rounded-lg text-white/80`}
+      className={`${className} flex shrink-0 items-center justify-center ${rounded} text-white/80`}
       style={{ background: `linear-gradient(135deg, hsl(${hue1} 70% 45%), hsl(${hue2} 70% 30%))` }}
     >
       <Music size={iconSize} />

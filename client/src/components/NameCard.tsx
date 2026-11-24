@@ -34,6 +34,12 @@ export function NameCard({ initialName = '', onSubmit, onCancel }: Props) {
       >
         <h1 className="text-2xl font-bold">What should we call you?</h1>
         <p className="mt-1 text-sm text-white/60">Your name shows next to the songs you add.</p>
+        <p className="mt-1 text-xs text-white/50">
+          Your nickname is stored on the host&apos;s computer.{' '}
+          <a href="/privacy" className="underline underline-offset-2">
+            Privacy
+          </a>
+        </p>
         <label htmlFor="guest-name" className="sr-only">
           Your name
         </label>

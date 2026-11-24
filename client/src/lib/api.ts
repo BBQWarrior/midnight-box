@@ -102,6 +102,7 @@ export const api = {
     request<void>('/api/admin/setup', { method: 'POST', body: json({ password }) }),
   adminLogin: (password: string) =>
     request<void>('/api/admin/login', { method: 'POST', body: json({ password }) }),
+  disconnectSpotify: () => request<void>('/api/admin/spotify/disconnect', { method: 'POST' }),
   adminLogout: () => request<void>('/api/admin/logout', { method: 'POST' }),
   banGuest: (publicId: string) =>
     request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'POST' }),

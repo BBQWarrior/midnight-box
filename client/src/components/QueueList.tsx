@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ListMusic, UserX, X } from 'lucide-react';
 import type { GuestTag, QueueEntry } from '@shared/types';
 import { Badge } from './Badge';
-import { Cover } from './Cover';
+import { CoverLink } from './Spotify';
 
 interface Props {
   queue: QueueEntry[];
@@ -11,9 +11,11 @@ interface Props {
   onRemove?: (entry: QueueEntry) => void;
   removingId?: number | null;
   onBan?: (guest: GuestTag) => void;
+  /** Real Spotify content (not demo mode): covers link to Spotify. */
+  spotify?: boolean;
 }
 
-export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId, onBan }: Props) {
+export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId, onBan, spotify = false }: Props) {
   const [confirmBan, setConfirmBan] = useState<string | null>(null);
 
   if (queue.length === 0) {
@@ -46,13 +48,13 @@ export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId,
               mine ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-white/5'
             }`}
           >
-            <Cover track={entry.track} />
+            <CoverLink track={entry.track} spotify={spotify} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <p className="truncate text-sm font-medium">{entry.track.name}</p>
+                <p className="truncate text-sm font-medium" title={entry.track.name}>{entry.track.name}</p>
                 {entry.track.explicit && <Badge tone="explicit" label="Explicit">E</Badge>}
               </div>
-              <p className="truncate text-xs text-white/60">
+              <p className="truncate text-xs text-white/60" title={entry.track.artists.map((a) => a.name).join(', ')}>
                 {entry.track.artists.map((a) => a.name).join(', ')}
               </p>
               <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/50">

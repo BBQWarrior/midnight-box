@@ -35,7 +35,7 @@ Built mobile-first, real-time, and with a security model designed for "a laptop 
 - **Live everywhere**: now playing, progress and the queue update instantly on every phone over WebSockets.
 - **Gapless hand-off to Spotify**: Midnight Box keeps its own queue and hands Spotify the next
   song just before the current one ends (see [How it works](#how-it-works)).
-- **Host panel, from any device**: password login, connect Spotify, choose the speaker, pause,
+- **Host panel, from any device**: password login, connect or disconnect Spotify, choose the speaker, pause,
   skip, remove songs, clear cooldowns, switch vote rounds and vote-to-skip on or off, remove
   troublemakers from the party.
 - **Demo mode**: a fake music catalog and a simulated player, so you can try everything without Spotify.
@@ -178,6 +178,10 @@ The design assumes guests are untrusted:
   All input is validated with Zod, and every route is rate limited.
 - **Minimal attack surface.** Only the built `client/dist` folder is served. Logs never include
   query strings (search terms, OAuth codes).
+- **Keeps only what it needs.** Play history is deleted once no cooldown or limit needs it (2 hours by
+  default), guests' network addresses and votes never leave memory, and **Disconnect Spotify** in the
+  host panel deletes the saved login and listening history immediately. Details are in the
+  [privacy policy](PRIVACY.md), which guests and the host can also read in the app at `/privacy`.
 
 These rules are covered by tests in [`server/test/app.test.ts`](server/test/app.test.ts).
 
@@ -222,6 +226,13 @@ client/src/
 Spotify's consumer subscriptions are licensed for personal use. Midnight Box is meant for house
 parties and similar private events, not for playing music in a bar or shop.
 
+Midnight Box follows the [Spotify Developer Policy](https://developer.spotify.com/policy) and
+[Branding Guidelines](https://developer.spotify.com/documentation/design): Spotify content is shown with
+the Spotify logo and links back to Spotify, cover art is never cropped or covered, and Spotify data
+isn't kept longer than needed. Everyone who runs it creates their own Spotify app and accepts
+Spotify's [Developer Terms](https://developer.spotify.com/terms) for it.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Spotify and the Spotify logo are trademarks of Spotify AB. The logo in
+`client/src/assets/spotify` is used as Spotify's Branding Guidelines require and is not covered by the MIT licence.

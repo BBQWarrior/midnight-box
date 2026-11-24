@@ -3,16 +3,17 @@ import { Check, Plus } from 'lucide-react';
 import type { VoteState } from '@shared/types';
 import { ApiRequestError, api, errorMessage, isAbort } from '../lib/api';
 import { useSecondsLeft } from '../hooks/useSecondsLeft';
-import { Cover } from './Cover';
+import { CoverLink } from './Spotify';
 import { useToast } from './Toast';
 
 interface Props {
   vote: VoteState;
   skewMs: number;
   onForbidden: () => void;
+  spotify?: boolean;
 }
 
-export function VoteCard({ vote, skewMs, onForbidden }: Props) {
+export function VoteCard({ vote, skewMs, onForbidden, spotify = false }: Props) {
   const toast = useToast();
   const round = vote.round;
   const roundId = round?.id ?? null;
@@ -98,10 +99,10 @@ export function VoteCard({ vote, skewMs, onForbidden }: Props) {
           const picked = mine.includes(c.track.id);
           return (
             <li key={c.track.id} className="flex items-center gap-3">
-              <Cover track={c.track} />
+              <CoverLink track={c.track} spotify={spotify} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{c.track.name}</p>
-                <p className="truncate text-xs text-white/60">{c.track.artists[0]?.name}</p>
+                <p className="truncate text-sm font-medium" title={c.track.name}>{c.track.name}</p>
+                <p className="truncate text-xs text-white/60" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
                 <p className="text-xs tabular-nums text-white/50">
                   {c.votes} {c.votes === 1 ? 'vote' : 'votes'}
                 </p>

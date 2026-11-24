@@ -5,15 +5,18 @@ import { useElapsed } from '../hooks/useElapsed';
 import { formatTime } from '../lib/format';
 import { Badge } from './Badge';
 import { Cover } from './Cover';
+import { OpenSpotifyLink } from './Spotify';
 
 interface Props {
   nowPlaying: NowPlaying | null;
   skewMs: number;
   /** Optional extra row under the progress bar (guest page: skip vote). */
   action?: ReactNode;
+  /** Real Spotify content (not demo mode): show the link back. */
+  spotify?: boolean;
 }
 
-export function NowPlayingCard({ nowPlaying, skewMs, action }: Props) {
+export function NowPlayingCard({ nowPlaying, skewMs, action, spotify = false }: Props) {
   const playing = nowPlaying?.isPlaying ?? false;
   const clamped = useElapsed(nowPlaying, skewMs);
 
@@ -49,8 +52,10 @@ export function NowPlayingCard({ nowPlaying, skewMs, action }: Props) {
               </>
             )}
           </p>
-          <h2 className="mt-1 truncate text-lg font-semibold">{track.name}</h2>
-          <p className="truncate text-sm text-white/70">{track.artists.map((a) => a.name).join(', ')}</p>
+          <h2 className="mt-1 break-words text-lg font-semibold">{track.name}</h2>
+          <p className="truncate text-sm text-white/70" title={track.artists.map((a) => a.name).join(', ')}>
+            {track.artists.map((a) => a.name).join(', ')}
+          </p>
           {nowPlaying.votePick && (
             <span className="mt-2 inline-block">
               <Badge tone="cyan">Vote pick</Badge>
@@ -79,6 +84,11 @@ export function NowPlayingCard({ nowPlaying, skewMs, action }: Props) {
           <span>{formatTime(track.durationMs)}</span>
         </div>
       </div>
+      {spotify && (
+        <div className="mt-2 flex min-h-8 items-center">
+          <OpenSpotifyLink track={track} className="text-xs" />
+        </div>
+      )}
       {action && <div className="mt-3">{action}</div>}
     </section>
   );

@@ -6,7 +6,7 @@ import { formatClock, formatTime } from '../lib/format';
 import { computeAllowance } from '../lib/quota';
 import { useNow } from '../hooks/useNow';
 import { Badge } from './Badge';
-import { Cover } from './Cover';
+import { CoverLink, SpotifyLogo } from './Spotify';
 import { useToast } from './Toast';
 
 interface Props {
@@ -171,6 +171,11 @@ export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, on
           />
         </div>
         <p className="mt-2 px-1 text-xs text-white/60">{hint}</p>
+        {!state.demoMode && providerReady && (
+          <div className="-mb-3 -ml-3">
+            <SpotifyLogo />
+          </div>
+        )}
       </div>
 
       {loading && results.length === 0 && (
@@ -192,24 +197,29 @@ export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, on
           const isSel = selected.has(track.id);
           const blocked = !disabled && !isSel && selected.size >= maxSelectable;
           return (
-            <li key={track.id}>
+            <li
+              key={track.id}
+              className={`flex items-center rounded-2xl border pl-2.5 backdrop-blur-xl transition-colors ${
+                isSel ? 'border-accent bg-accent/15' : 'border-white/10 bg-white/5'
+              }`}
+            >
+              <CoverLink track={track} spotify={!state.demoMode} />
               <button
                 type="button"
                 role="checkbox"
                 aria-checked={isSel}
                 disabled={disabled || blocked}
                 onClick={() => toggle(track)}
-                className={`flex min-h-16 w-full items-center gap-3 rounded-2xl border p-2.5 text-left backdrop-blur-xl transition-colors ${
-                  isSel ? 'border-accent bg-accent/15' : 'border-white/10 bg-white/5'
-                } ${disabled || blocked ? 'opacity-50' : 'active:bg-white/10'}`}
+                className={`flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-r-2xl py-2.5 pl-3 pr-2.5 text-left ${
+                  disabled || blocked ? 'opacity-50' : 'active:bg-white/10'
+                }`}
               >
-                <Cover track={track} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-medium">{track.name}</span>
+                    <span className="truncate text-sm font-medium" title={track.name}>{track.name}</span>
                     {track.explicit && <Badge tone="explicit" label="Explicit">E</Badge>}
                   </span>
-                  <span className="block truncate text-xs text-white/60">
+                  <span className="block truncate text-xs text-white/60" title={track.artists.map((a) => a.name).join(', ')}>
                     {track.artists.map((a) => a.name).join(', ')}
                   </span>
                   {block && <span className="block text-xs text-amber-200/80">{blockText(block)}</span>}
