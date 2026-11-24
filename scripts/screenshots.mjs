@@ -2,7 +2,8 @@
 // Usage: npm run screenshots   (builds first; needs `npx playwright install chromium` once)
 //
 // Runs the production build on a spare port with a throwaway database, seeds a few guests
-// through the public API, then captures the guest, vote, search and host views at phone size.
+// through the public API, then captures the guest, vote, search and host views at phone size
+// and the TV screen at 720p.
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -16,6 +17,7 @@ const OUT_DIR = path.join(ROOT, 'docs', 'screenshots');
 const PORT = 8097;
 const BASE = `http://127.0.0.1:${PORT}`;
 const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+const TV = { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1.5 };
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'midnight-box-shots-'));
 const server = spawn(process.execPath, ['server/dist/index.js', '--demo'], {
@@ -114,13 +116,25 @@ async function main() {
     await page.getByText('3 votes').waitFor();
     await page.screenshot({ path: path.join(OUT_DIR, 'vote.png') });
 
-    // Pause voting so the winner doesn't change the queue below.
-    await host.request.post(`${BASE}/api/admin/vote`, { data: { enabled: false } });
-
     // A small party: fair-queue order will be Maya, Leo, Priya, Maya, Leo.
     await queue(maya, 'gravity waltz', 'cardboard rocket');
     await queue(leo, 'north of never', 'last stop');
     await queue(priya, 'magnetic north');
+
+    // TV screen, while the vote round is still running. Leo has had enough of this song.
+    const { nowPlaying } = await (await host.request.get(`${BASE}/api/state`)).json();
+    await leo.request.post(`${BASE}/api/skip`, { data: { trackId: nowPlaying.track.id, vote: true } });
+    const tvContext = await browser.newContext({ ...TV, colorScheme: 'dark' });
+    const tv = await tvContext.newPage();
+    await tv.goto(`${BASE}/tv`);
+    await tv.getByText('Vote for the next song').waitFor();
+    await tv.getByText('Gravity Waltz').first().waitFor();
+    await tv.waitForTimeout(800);
+    await tv.screenshot({ path: path.join(OUT_DIR, 'tv.png') });
+    await tvContext.close();
+
+    // Pause voting so the winner doesn't change the queue below.
+    await host.request.post(`${BASE}/api/admin/vote`, { data: { enabled: false } });
 
     // Guest view.
     await page.reload();
