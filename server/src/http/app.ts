@@ -17,6 +17,7 @@ import type { HostAuth } from '../services/host-auth.js';
 import type { Player } from '../services/player.js';
 import type { QueueService } from '../services/queue.js';
 import type { IoServer, StateHub } from '../services/state.js';
+import type { SkipService } from '../services/skips.js';
 import type { VoteService } from '../services/votes.js';
 import { apiError, HttpError } from './errors.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -34,6 +35,7 @@ export interface AppDeps {
   hostAuth: HostAuth;
   player: Player;
   votes: VoteService;
+  skips: SkipService;
   hub: StateHub;
   joinInfo: JoinInfo;
   cookieSecret: string;

@@ -1,7 +1,6 @@
 import type { MyVotes, Track, VoteResult, VoteState, VotingStatus } from '@shared/types';
 import { type Db, kvGet, kvSet } from '../db.js';
 import { LruCache } from '../lib/cache.js';
-import { isLoopbackIp } from '../lib/net.js';
 import { baseTitle, mainArtist, songKey } from '../lib/tracks.js';
 import type { MusicProvider, SongRef, SuggestionSource } from '../providers/types.js';
 import type { CooldownService } from './cooldowns.js';
@@ -49,15 +48,6 @@ interface Round {
 }
 
 export type VoteOutcome = MyVotes | 'closed' | 'not_a_candidate';
-
-/**
- * One voter per device: votes are keyed by network address, so a fresh guest session (cleared
- * cookies, private tab) doesn't add votes. The host computer is the exception: everything on it
- * shares a loopback address, so there each guest session counts.
- */
-export function voterKey(guestId: string, ip: string | undefined): string {
-  return ip && !isLoopbackIp(ip) ? `ip:${ip}` : `guest:${guestId}`;
-}
 
 const ENABLED_KEY = 'voting_enabled';
 /** Provider lookups allowed per round start; resolved songs are cached, so later rounds are cheaper. */

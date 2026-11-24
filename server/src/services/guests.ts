@@ -21,7 +21,23 @@ interface GuestRow {
   banned: number;
 }
 
+/** Where and when a guest's requests last came from (memory only). */
+interface Presence {
+  ip: string;
+  at: number;
+  named: boolean;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * One voter per device: votes are keyed by network address, so a fresh guest session (cleared
+ * cookies, private tab) doesn't add votes. The host computer is the exception: everything on it
+ * shares a loopback address, so there each guest session counts.
+ */
+export function voterKey(guestId: string, ip: string | undefined): string {
+  return ip && !isLoopbackIp(ip) ? `ip:${ip}` : `guest:${guestId}`;
+}
 
 /** Normalizes a display name: no control characters, single spaces, trimmed. */
 export function cleanName(raw: string): string {
@@ -33,7 +49,7 @@ export function cleanName(raw: string): string {
 }
 
 export class GuestService {
-  private readonly lastIp = new Map<string, string>();
+  private readonly presence = new Map<string, Presence>();
   /** Banned address -> public id of the guest it was banned for. */
   private readonly bannedIps = new Map<string, string>();
 
@@ -65,6 +81,8 @@ export class GuestService {
 
   setName(id: string, name: string): Guest {
     this.db.prepare('UPDATE guests SET name = ? WHERE id = ?').run(name, id);
+    const seen = this.presence.get(id);
+    if (seen) seen.named = true;
     const guest = this.get(id);
     if (!guest) throw new Error('Guest disappeared');
     return guest;
@@ -75,14 +93,24 @@ export class GuestService {
   // until the server restarts, so clearing cookies isn't enough to come back. Addresses are
   // only kept in memory.
 
-  /** Remembers where a guest's requests come from, so a ban can cover their address too. */
+  /**
+   * Remembers where and when a guest's requests come from, so a ban can cover their address too
+   * and skip votes know how many people are around.
+   */
   seen(guest: Guest, ip: string): void {
-    this.lastIp.set(guest.id, ip);
+    this.presence.set(guest.id, { ip, at: this.now(), named: guest.name !== null });
   }
 
   /** The address a guest's requests last came from (memory only). */
   ipOf(guestId: string): string | undefined {
-    return this.lastIp.get(guestId);
+    return this.presence.get(guestId)?.ip;
+  }
+
+  /** Devices with a named guest that made a request since `since`, counted like votes (one per device). */
+  activeDevices(since: number): number {
+    const devices = new Set<string>();
+    for (const [id, p] of this.presence) if (p.named && p.at >= since) devices.add(voterKey(id, p.ip));
+    return devices.size;
   }
 
   isIpBanned(ip: string): boolean {
@@ -94,7 +122,10 @@ export class GuestService {
     const guest = this.byPublicId(publicId);
     if (!guest) return undefined;
     this.db.prepare('UPDATE guests SET banned = 1 WHERE id = ?').run(guest.id);
-    const ip = this.lastIp.get(guest.id);
+    const seen = this.presence.get(guest.id);
+    const ip = seen?.ip;
+    // Banned guests are no longer part of the party.
+    if (seen) seen.at = 0;
     // Never lock out the host computer itself (or everyone behind the dev proxy).
     if (ip && !isLoopbackIp(ip)) this.bannedIps.set(ip, publicId);
     return { ...guest, banned: true };

@@ -80,6 +80,7 @@ export interface PublicState {
   queue: QueueEntry[];
   limits: Limits;
   vote: VoteState;
+  skip: SkipState;
   /** Server clock (ms) at snapshot time, used to correct client clock skew. */
   serverTime: number;
 }
@@ -256,6 +257,48 @@ export interface VotingToggle {
   enabled: boolean;
 }
 // POST /api/admin/vote/end closes the current round now and adds the winner.
+
+// ---- Vote to skip ------------------------------------------------------------
+
+/** A song guests voted off. */
+export interface SkipResult {
+  track: Track;
+  votes: number;
+  at: number;
+}
+
+/** Skip votes for the song that is playing (part of PublicState). Votes reset when the song changes. */
+export interface SkipState {
+  /** The host's on/off switch (POST /api/admin/skip-voting). */
+  enabled: boolean;
+  /** The song the votes are for; null when nothing is playing. */
+  trackId: string | null;
+  votes: number;
+  /**
+   * Votes needed to skip: half the guests active in the last 15 minutes, rounded up, at least 2.
+   * Fixed once the first vote for a song comes in, so the target doesn't move while people vote.
+   */
+  needed: number;
+  /** The last song guests skipped, for a short announcement. */
+  lastSkip: SkipResult | null;
+}
+
+/** POST /api/skip. `trackId` is the song the guest saw, so a late tap can't skip the next one. */
+export interface SkipBody {
+  trackId: string;
+  vote: boolean;
+}
+
+/** GET/POST /api/skip: whether this device voted to skip the current song. */
+export interface MySkip {
+  trackId: string | null;
+  voted: boolean;
+}
+
+/** POST /api/admin/skip-voting */
+export interface SkipVotingToggle {
+  enabled: boolean;
+}
 
 /** GET /api/admin/cooldowns: what is cooling down right now. */
 export interface CooldownList {

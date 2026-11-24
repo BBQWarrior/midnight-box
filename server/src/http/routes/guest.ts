@@ -1,10 +1,18 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AddToQueueResponse, Me, MyVotes, Quota, RejectReason, SearchResponse, Track } from '@shared/types';
+import type {
+  AddToQueueResponse,
+  Me,
+  MySkip,
+  MyVotes,
+  Quota,
+  RejectReason,
+  SearchResponse,
+  Track,
+} from '@shared/types';
 import { LruCache } from '../../lib/cache.js';
-import { cleanName, type Guest, NAME_MAX_LENGTH } from '../../services/guests.js';
+import { cleanName, type Guest, NAME_MAX_LENGTH, voterKey } from '../../services/guests.js';
 import { QueueService } from '../../services/queue.js';
-import { voterKey } from '../../services/votes.js';
 import { HttpError } from '../errors.js';
 import { clientIp } from '../security.js';
 import type { AppDeps } from '../app.js';
@@ -22,6 +30,7 @@ const SearchQuery = z.object({
 });
 const TrackId = z.string().min(1).max(64).regex(/^[A-Za-z0-9:_-]+$/, 'Invalid track id');
 const VoteBody = z.object({ roundId: z.number().int().positive(), trackId: TrackId, vote: z.boolean() });
+const SkipBody = z.object({ trackId: TrackId, vote: z.boolean() });
 
 interface RawPage {
   tracks: Track[];
@@ -29,7 +38,7 @@ interface RawPage {
 }
 
 export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { guests, queue, cooldowns, provider, player, votes, hub, config, joinInfo } = deps;
+  const { guests, queue, cooldowns, provider, player, votes, skips, hub, config, joinInfo } = deps;
   const now = deps.now ?? Date.now;
   const { limits } = config;
   const windowMs = limits.windowMinutes * 60_000;
@@ -198,6 +207,24 @@ export function registerGuestRoutes(app: FastifyInstance, deps: AppDeps): void {
     const result = votes.vote(voterKey(guest.id, clientIp(req)), roundId, trackId, vote);
     if (result === 'closed') throw new HttpError(400, 'bad_request', 'That vote has ended.');
     if (result === 'not_a_candidate') throw new HttpError(400, 'bad_request', 'That song is not in this vote.');
+    return result;
+  });
+
+  // ---- Vote to skip --------------------------------------------------------
+
+  app.get('/api/skip', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req): Promise<MySkip> => {
+    const guest = requireGuest(req);
+    return skips.mine(voterKey(guest.id, clientIp(req)));
+  });
+
+  app.post('/api/skip', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req): Promise<MySkip> => {
+    const guest = requireGuest(req);
+    if (!guest.name) throw new HttpError(400, 'name_required', 'Pick a name first.');
+    const { trackId, vote } = SkipBody.parse(req.body);
+    const result = await skips.vote(voterKey(guest.id, clientIp(req)), trackId, vote);
+    if (result === 'disabled') throw new HttpError(400, 'bad_request', 'The host turned off skip voting.');
+    if (result === 'ended') throw new HttpError(400, 'bad_request', 'That song already ended.');
+    if (result === 'paused') throw new HttpError(400, 'bad_request', 'The music is paused.');
     return result;
   });
 }

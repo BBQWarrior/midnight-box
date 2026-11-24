@@ -6,6 +6,7 @@ import type {
   HostSession,
   Limits,
   Me,
+  MySkip,
   MyVotes,
   PublicState,
   SearchResponse,
@@ -22,6 +23,7 @@ import { HostAuth } from '../src/services/host-auth.js';
 import { Player } from '../src/services/player.js';
 import { QueueService } from '../src/services/queue.js';
 import { StateHub } from '../src/services/state.js';
+import { SkipService } from '../src/services/skips.js';
 import { VoteService } from '../src/services/votes.js';
 
 const MIN = 60_000;
@@ -98,7 +100,11 @@ async function makeApp(limits: Partial<Limits> = {}) {
     },
     { roundMs: config.vote.roundMs, maxWaiting: config.vote.maxWaiting, candidates: 4, retryMs: 30_000 },
   );
-  const hub = new StateHub({ provider, queue, player, votes, limits: config.limits, demo: true, now });
+  const skips = new SkipService(
+    { db, guests, player, log: silent, onChange: () => {}, now },
+    { activeMs: 15 * MIN, minVotes: 2 },
+  );
+  const hub = new StateHub({ provider, queue, player, votes, skips, limits: config.limits, demo: true, now });
   ({ app } = await buildApp({
     config,
     provider,
@@ -109,6 +115,7 @@ async function makeApp(limits: Partial<Limits> = {}) {
     hostAuth,
     player,
     votes,
+    skips,
     hub,
     joinInfo: { joinUrl: 'http://192.168.1.10:8080/', qrDataUrl: 'data:image/svg+xml;base64,' },
     cookieSecret: 'test-cookie-secret-that-is-long-enough',
@@ -448,6 +455,101 @@ describe('vote rounds', () => {
       payload: {},
     });
     expect((await voteCounts())[0]).toBe(0);
+  });
+});
+
+describe('vote to skip', () => {
+  const PHONES = ['192.168.1.21', '192.168.1.22', '192.168.1.23', '192.168.1.24'];
+
+  /** Refreshes playback and returns the id of the song playing. */
+  async function playing() {
+    await player.tick();
+    const id = (await state()).nowPlaying?.track.id;
+    if (!id) throw new Error('nothing is playing');
+    return id;
+  }
+
+  const skipVote = (cookies: Record<string, string>, trackId: string, vote = true, remoteAddress = PHONE) =>
+    app.inject({ method: 'POST', url: '/api/skip', cookies, remoteAddress, payload: { trackId, vote } });
+
+  it('skips the song once half the guests vote, counting one vote per device', async () => {
+    await makeApp();
+    const song = await playing();
+    const maya = await join('Maya', PHONE);
+    const mayaAgain = await join('Maya again', PHONE);
+    const others: Record<string, string>[] = [];
+    for (const [i, ip] of PHONES.entries()) others.push(await join(`Guest ${i}`, ip));
+    // Five devices are around, so three votes are needed.
+    expect((await state()).skip).toMatchObject({ enabled: true, trackId: song, votes: 0, needed: 3 });
+
+    expect((await skipVote(maya, song)).json<MySkip>()).toEqual({ trackId: song, voted: true });
+    await skipVote(mayaAgain, song);
+    const mine = await app.inject({ method: 'GET', url: '/api/skip', cookies: mayaAgain, remoteAddress: PHONE });
+    expect(mine.json<MySkip>()).toEqual({ trackId: song, voted: true });
+    await skipVote(others[0]!, song, true, PHONES[0]);
+    await skipVote(others[0]!, song, false, PHONES[0]);
+    expect((await state()).skip).toMatchObject({ votes: 1, needed: 3 });
+
+    await skipVote(others[1]!, song, true, PHONES[1]);
+    await skipVote(others[2]!, song, true, PHONES[2]);
+    expect((await state()).skip.lastSkip).toMatchObject({ track: { id: song }, votes: 3 });
+    expect(await playing()).not.toBe(song);
+    expect((await state()).skip.votes).toBe(0);
+  });
+
+  it('needs two votes or more, counts only guests seen lately, and keeps the target once voting starts', async () => {
+    await makeApp();
+    for (const [i, ip] of PHONES.entries()) await join(`Guest ${i}`, ip);
+    advance(16 * MIN);
+    // The others have gone quiet; one guest alone can't skip.
+    const maya = await join('Maya', PHONE);
+    const song = await playing();
+    expect((await state()).skip.needed).toBe(2);
+    await skipVote(maya, song);
+
+    // More guests show up mid-song: the target stays where it was when voting started.
+    const late: Record<string, string>[] = [];
+    for (const [i, ip] of PHONES.entries()) late.push(await join(`Late ${i}`, ip));
+    expect((await state()).skip).toMatchObject({ votes: 1, needed: 2 });
+    await skipVote(late[0]!, song, true, PHONES[0]);
+    expect(await playing()).not.toBe(song);
+  });
+
+  it('rejects votes for a song that ended, while paused, from unnamed guests, or when the host turned it off', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const song = await playing();
+    const maya = await join('Maya', PHONE);
+    const other = MOCK_CATALOG.find((t) => t.id !== song)!.id;
+    expect((await skipVote(maya, other)).json().error.message).toMatch(/already ended/);
+    const unnamed = await join(null, PHONES[0]);
+    expect((await skipVote(unnamed, song, true, PHONES[0])).json().error.code).toBe('name_required');
+
+    await player.pause();
+    await player.tick();
+    expect((await skipVote(maya, song)).json().error.message).toMatch(/paused/);
+    await player.resume();
+    await player.tick();
+
+    await skipVote(maya, song);
+    const toggle = (enabled: boolean, cookies?: Record<string, string>) =>
+      app.inject({ method: 'POST', url: '/api/admin/skip-voting', cookies, payload: { enabled } });
+    expect((await toggle(false)).statusCode).toBe(401);
+    expect((await toggle(false, host)).statusCode).toBe(204);
+    expect((await state()).skip).toMatchObject({ enabled: false, votes: 0 });
+    expect((await skipVote(maya, song)).json().error.message).toMatch(/turned off/);
+  });
+
+  it("drops a removed guest's vote", async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const song = await playing();
+    const rowdy = await join('Rowdy', PHONE);
+    await skipVote(rowdy, song);
+    const me = await app.inject({ method: 'GET', url: '/api/me', cookies: rowdy, remoteAddress: PHONE });
+    const ban = `/api/admin/guests/${me.json<Me>().publicId}/ban`;
+    await app.inject({ method: 'POST', url: ban, cookies: host, payload: {} });
+    expect((await state()).skip.votes).toBe(0);
   });
 });
 

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AdminStatus, CooldownList, Device, HostSession } from '@shared/types';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, SESSION_TTL_MS } from '../../services/host-auth.js';
-import { voterKey } from '../../services/votes.js';
+import { voterKey } from '../../services/guests.js';
 import { HttpError } from '../errors.js';
 import { clientIp, HOST_COOKIE, isHostRequest, makeRequireAdmin, requireHost } from '../security.js';
 import type { AppDeps } from '../app.js';
@@ -23,7 +23,7 @@ const ClearBody = z.object({ kind: z.enum(['song', 'artist']), key: z.string().m
 
 /** Host panel: password setup and login, then playback, queue, cooldown and guest controls. */
 export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns, votes } = deps;
+  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns, votes, skips } = deps;
   const opts = {
     preHandler: makeRequireAdmin(hostAuth),
     config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
@@ -160,6 +160,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     return reply.status(204).send();
   });
 
+  // ---- Vote to skip ------------------------------------------------------
+
+  app.post('/api/admin/skip-voting', opts, async (req, reply) => {
+    const { enabled } = VotingBody.parse(req.body);
+    skips.setEnabled(enabled);
+    req.log.info(`Vote to skip turned ${enabled ? 'on' : 'off'}`);
+    return reply.status(204).send();
+  });
+
   // ---- Guests --------------------------------------------------------------
 
   app.post('/api/admin/guests/:publicId/ban', opts, async (req, reply) => {
@@ -167,7 +176,9 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     const guest = guests.ban(publicId);
     if (!guest) throw new HttpError(404, 'not_found', 'No guest with that id.');
     const removed = queue.removeQueuedFor(guest.id);
-    votes.removeVoter(voterKey(guest.id, guests.ipOf(guest.id)), voterKey(guest.id, undefined));
+    const voters = [voterKey(guest.id, guests.ipOf(guest.id)), voterKey(guest.id, undefined)];
+    votes.removeVoter(...voters);
+    skips.removeVoter(...voters);
     req.log.info(`Host removed ${guest.name ?? 'a guest'} from the party (${removed} queued songs dropped)`);
     hub.broadcast();
     return reply.status(204).send();

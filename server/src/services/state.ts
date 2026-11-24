@@ -3,6 +3,7 @@ import type { ClientToServerEvents, Limits, NowPlaying, PublicState, ServerToCli
 import type { MusicProvider } from '../providers/types.js';
 import type { Player } from './player.js';
 import { QueueService } from './queue.js';
+import type { SkipService } from './skips.js';
 import type { VoteService } from './votes.js';
 
 export type IoServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -15,6 +16,7 @@ interface StateDeps {
   queue: QueueService;
   player: Player;
   votes: VoteService;
+  skips: SkipService;
   limits: Limits;
   demo: boolean;
   now?: () => number;
@@ -39,7 +41,7 @@ export class StateHub {
   }
 
   snapshot(): PublicState {
-    const { provider, queue, player, votes, limits, demo } = this.deps;
+    const { provider, queue, player, votes, skips, limits, demo } = this.deps;
     const { state, measuredAt } = player.playback;
     const row = queue.playing();
     const playingRow = row && row.track.uri === state?.track?.uri ? row : undefined;
@@ -63,6 +65,7 @@ export class StateHub {
       queue: queue.upcoming().map(QueueService.toEntry),
       limits,
       vote: votes.state(),
+      skip: skips.state(),
       serverTime: this.now(),
     };
   }

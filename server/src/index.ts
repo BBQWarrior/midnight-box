@@ -19,6 +19,7 @@ import { HostAuth } from './services/host-auth.js';
 import { Player } from './services/player.js';
 import { QueueService } from './services/queue.js';
 import { StateHub } from './services/state.js';
+import { SkipService } from './services/skips.js';
 import { VoteService } from './services/votes.js';
 
 async function main(): Promise<void> {
@@ -83,7 +84,11 @@ async function main(): Promise<void> {
       retryMs: config.vote.roundMs,
     },
   );
-  hub = new StateHub({ provider, queue, player, votes, limits: config.limits, demo: config.demo });
+  const skips = new SkipService(
+    { db, guests, player, log, onChange: () => hub?.broadcast() },
+    { activeMs: 15 * 60_000, minVotes: 2 },
+  );
+  hub = new StateHub({ provider, queue, player, votes, skips, limits: config.limits, demo: config.demo });
 
   const joinUrl = config.publicUrl ?? `http://${lanAddress()}:${config.uiPort}/`;
   const joinInfo: JoinInfo = {
@@ -103,6 +108,7 @@ async function main(): Promise<void> {
     hostAuth,
     player,
     votes,
+    skips,
     hub,
     joinInfo,
     cookieSecret: getOrCreateSecret(db, 'cookie_secret'),
