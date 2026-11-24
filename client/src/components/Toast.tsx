@@ -24,7 +24,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const show = useCallback((message: string, tone: ToastItem['tone'] = 'info') => {
     const id = nextId.current++;
-    setItems((prev) => [...prev.slice(-2), { id, message, tone }]);
+    // The same message again (e.g. two searches failing the same way) replaces the first one.
+    setItems((prev) => [
+      ...prev.filter((t) => t.message !== message || t.tone !== tone).slice(-2),
+      { id, message, tone },
+    ]);
     window.setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 3500);
   }, []);
 

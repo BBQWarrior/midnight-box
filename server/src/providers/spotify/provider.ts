@@ -94,7 +94,9 @@ export class SpotifyProvider implements MusicProvider {
   async search(query: string, offset: number, limit: number): Promise<SearchResult> {
     const data = SearchResponse.parse(
       await this.request('GET', '/search', {
-        query: { q: query, type: 'track', limit, offset, market: 'from_token' },
+        // No market parameter: with a user token Spotify applies the account's country by itself, and
+        // market=from_token on search now needs an extra permission ("Insufficient client scope").
+        query: { q: query, type: 'track', limit, offset },
       }),
     );
     return {
@@ -112,7 +114,7 @@ export class SpotifyProvider implements MusicProvider {
   async getTrack(id: string): Promise<Track | null> {
     if (!SPOTIFY_ID.test(id)) return null;
     try {
-      return toTrack(await this.request('GET', `/tracks/${id}`, { query: { market: 'from_token' } }));
+      return toTrack(await this.request('GET', `/tracks/${id}`));
     } catch (err) {
       if (err instanceof ProviderError && (err.status === 404 || err.status === 400)) return null;
       throw err;
@@ -120,7 +122,7 @@ export class SpotifyProvider implements MusicProvider {
   }
 
   async getPlayback(): Promise<PlaybackState | null> {
-    const raw = await this.request('GET', '/me/player', { query: { market: 'from_token' } });
+    const raw = await this.request('GET', '/me/player');
     if (raw === null) return null; // 204: no active session
     const data = PlayerResponse.parse(raw);
     return {
@@ -210,13 +212,31 @@ export class SpotifyProvider implements MusicProvider {
   }
 }
 
+const ErrorBody = z.object({
+  error: z.object({ reason: z.string().optional(), message: z.string().optional() }),
+});
+
+/** Turns Spotify's error into words the host can act on, keeping Spotify's own explanation. */
 function describeError(status: number, data: unknown): string {
-  const reason = z.object({ error: z.object({ reason: z.string().optional() }) }).safeParse(data);
-  const why = reason.success ? reason.data.error.reason : undefined;
+  const body = ErrorBody.safeParse(data);
+  const why = body.success ? body.data.error.reason : undefined;
+  const said = body.success ? body.data.error.message?.trim().slice(0, 200) : undefined;
   if (why === 'NO_ACTIVE_DEVICE' || (status === 404 && !why)) {
     return 'No active Spotify device. Open Spotify on the speaker device, or pick a device in the admin panel.';
   }
   if (why === 'PREMIUM_REQUIRED') return 'Playback control needs a Spotify Premium account.';
-  if (status === 403) return 'Spotify refused that action.';
-  return `Spotify request failed (${status}).`;
+  if (status === 403) {
+    // Development Mode: only the app's owner and accounts added in the dashboard may use it.
+    if (said && /not be registered|not registered/i.test(said)) {
+      return (
+        "This Spotify account isn't allowed to use your Spotify app. Connect with the account that created " +
+        'the app, or add this one under User Management in the Spotify Developer Dashboard.'
+      );
+    }
+    if (said && /premium/i.test(said)) {
+      return `Spotify needs Premium for this (${said}). In Development Mode the app's owner needs Premium too.`;
+    }
+    return said ? `Spotify refused that action: ${said}` : 'Spotify refused that action.';
+  }
+  return said ? `Spotify request failed (${status}): ${said}` : `Spotify request failed (${status}).`;
 }
