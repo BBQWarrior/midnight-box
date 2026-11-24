@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react';
 import { Pause, Disc3 } from 'lucide-react';
 import type { NowPlaying } from '@shared/types';
-import { useNow } from '../hooks/useNow';
+import { useElapsed } from '../hooks/useElapsed';
 import { formatTime } from '../lib/format';
 import { Badge } from './Badge';
 import { Cover } from './Cover';
@@ -8,11 +9,13 @@ import { Cover } from './Cover';
 interface Props {
   nowPlaying: NowPlaying | null;
   skewMs: number;
+  /** Optional extra row under the progress bar (guest page: skip vote). */
+  action?: ReactNode;
 }
 
-export function NowPlayingCard({ nowPlaying, skewMs }: Props) {
+export function NowPlayingCard({ nowPlaying, skewMs, action }: Props) {
   const playing = nowPlaying?.isPlaying ?? false;
-  const now = useNow(playing);
+  const clamped = useElapsed(nowPlaying, skewMs);
 
   if (!nowPlaying) {
     return (
@@ -29,10 +32,6 @@ export function NowPlayingCard({ nowPlaying, skewMs }: Props) {
   }
 
   const { track } = nowPlaying;
-  const elapsed = playing
-    ? nowPlaying.progressMs + (now + skewMs - nowPlaying.measuredAt)
-    : nowPlaying.progressMs;
-  const clamped = Math.min(Math.max(elapsed, 0), track.durationMs);
   const pct = track.durationMs > 0 ? (clamped / track.durationMs) * 100 : 0;
 
   return (
@@ -80,6 +79,7 @@ export function NowPlayingCard({ nowPlaying, skewMs }: Props) {
           <span>{formatTime(track.durationMs)}</span>
         </div>
       </div>
+      {action && <div className="mt-3">{action}</div>}
     </section>
   );
 }

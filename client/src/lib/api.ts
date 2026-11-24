@@ -7,6 +7,7 @@ import type {
   HostSession,
   JoinInfo,
   Me,
+  MySkip,
   MyVotes,
   PlaybackCommand,
   PublicState,
@@ -111,6 +112,11 @@ export const api = {
   vote: (body: VoteBody) => request<MyVotes>('/api/vote', { method: 'POST', body: json(body) }),
   setVoting: (enabled: boolean) =>
     request<void>('/api/admin/vote', { method: 'POST', body: json({ enabled }) }),
+  getMySkip: () => request<MySkip>('/api/skip'),
+  voteSkip: (trackId: string, vote: boolean) =>
+    request<MySkip>('/api/skip', { method: 'POST', body: json({ trackId, vote }) }),
+  setSkipVoting: (enabled: boolean) =>
+    request<void>('/api/admin/skip-voting', { method: 'POST', body: json({ enabled }) }),
   endVoteRound: () => request<void>('/api/admin/vote/end', { method: 'POST' }),
   clearCooldown: (body: ClearCooldown) =>
     request<void>('/api/admin/cooldowns/clear', { method: 'POST', body: json(body) }),

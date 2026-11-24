@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Check, Copy, LogOut, Pause, Play, SkipForward } from 'lucide-react';
+import { Check, Copy, LogOut, Pause, Play, SkipForward, Tv } from 'lucide-react';
 import type { AdminStatus, CooldownList, GuestTag, HostSession, JoinInfo, QueueEntry } from '@shared/types';
 import { ApiRequestError, api, errorMessage } from '../lib/api';
 import { useLiveState } from '../hooks/useLiveState';
@@ -351,6 +351,9 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
               {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
               {copied ? 'Copied' : 'Copy link'}
             </button>
+            <a href="/tv" target="_blank" rel="noopener" className={btn}>
+              <Tv size={16} aria-hidden="true" /> Open TV screen
+            </a>
           </div>
         ) : (
           <p className="text-white/60">Loading…</p>
@@ -437,6 +440,39 @@ function Panel({ onLoggedOut }: { onLoggedOut: () => void }) {
         ) : (
           <p className="text-white/60">Loading…</p>
         )}
+      </Section>
+
+      <Section title="Vote to skip">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p id="skip-label" className="text-sm font-medium">Let guests vote to skip the current song</p>
+            <p className="text-xs text-white/50">
+              It&apos;s skipped once half the guests active in the last 15 minutes agree (at least 2).
+            </p>
+            {state && state.skip.enabled && state.skip.votes > 0 && (
+              <p className="mt-1 text-xs tabular-nums text-cyan-200">
+                Skip votes: {state.skip.votes} of {state.skip.needed}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={state?.skip.enabled ?? false}
+            aria-labelledby="skip-label"
+            disabled={!state}
+            onClick={() => void run(() => api.setSkipVoting(!state?.skip.enabled), async () => undefined)}
+            className={`relative h-8 w-14 shrink-0 rounded-full border border-white/15 transition-colors disabled:opacity-40 ${
+              state?.skip.enabled ? 'bg-accent' : 'bg-white/10'
+            }`}
+          >
+            <span
+              className={`absolute left-1 top-1 size-6 rounded-full bg-white transition-transform ${
+                state?.skip.enabled ? 'translate-x-6' : ''
+              }`}
+            />
+          </button>
+        </div>
       </Section>
 
       <Section title="Removed guests">

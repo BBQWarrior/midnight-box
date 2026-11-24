@@ -6,6 +6,9 @@ import { useLiveState } from '../hooks/useLiveState';
 import { useMe } from '../hooks/useMe';
 import { NameCard } from '../components/NameCard';
 import { NowPlayingCard } from '../components/NowPlayingCard';
+import { SkipButton } from '../components/SkipButton';
+import { useToast } from '../components/Toast';
+import { useOnNew } from '../hooks/useOnNew';
 import { QueueList } from '../components/QueueList';
 import { VoteCard } from '../components/VoteCard';
 import { SearchPanel } from '../components/SearchPanel';
@@ -26,6 +29,11 @@ export function GuestPage() {
   const { me, banned, setName, setQuota, markBanned } = useMe();
   const [tab, setTab] = useState<Tab>('queue');
   const [editingName, setEditingName] = useState(false);
+  const toast = useToast();
+  const lastSkip = state?.skip.lastSkip ?? null;
+  useOnNew(lastSkip?.at ?? null, state !== null, () => {
+    if (lastSkip) toast.show(`Skipped by vote: ${lastSkip.track.name}`);
+  });
 
   if (banned) {
     return (
@@ -105,7 +113,15 @@ export function GuestPage() {
         </div>
       )}
 
-      <NowPlayingCard nowPlaying={state.nowPlaying} skewMs={skewMs} />
+      <NowPlayingCard
+        nowPlaying={state.nowPlaying}
+        skewMs={skewMs}
+        action={
+          state.skip.enabled && state.nowPlaying?.isPlaying ? (
+            <SkipButton skip={state.skip} trackId={state.nowPlaying.track.id} onForbidden={markBanned} />
+          ) : undefined
+        }
+      />
 
       <div role="tablist" aria-label="Sections" className="flex gap-1 rounded-full border border-white/10 bg-white/5 p-1 backdrop-blur-xl">
         <button type="button" role="tab" aria-selected={tab === 'queue'} onClick={() => setTab('queue')} className={tabClass('queue')}>
