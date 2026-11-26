@@ -16,6 +16,8 @@ export interface Track {
   name: string;
   artists: Artist[];
   album: string;
+  /** Provider album id, for blocking whole albums. Null when unknown (tracks saved before it existed). */
+  albumId: string | null;
   /** ~300px cover art, or null when unavailable (client renders a placeholder). */
   imageUrl: string | null;
   durationMs: number;
@@ -66,8 +68,14 @@ export interface Limits {
   windowMinutes: number;
   /** Minutes before the same song can be requested again (0 = off). */
   songCooldownMinutes: number;
-  /** Minutes before the same main artist can be requested again (0 = off). */
+  /**
+   * Artist rule: at most `artistMaxSongs` songs by the same main artist per `artistCooldownMinutes`
+   * (0 = off). With 1, an artist rests for the whole window after each song.
+   */
+  artistMaxSongs: number;
   artistCooldownMinutes: number;
+  /** Songs marked explicit can't be requested. */
+  noExplicit: boolean;
 }
 
 /** Broadcast to every client on the `state` socket event and returned by GET /api/state. */
@@ -109,7 +117,11 @@ export type TrackBlockReason =
   /** A song by the same main artist played recently. */
   | 'artist_cooldown'
   /** A song by the same main artist is already waiting in the queue. */
-  | 'artist_queued';
+  | 'artist_queued'
+  /** The host blocked the song, its album or one of its artists. */
+  | 'blacklisted'
+  /** The host turned off explicit songs. */
+  | 'explicit';
 
 export interface TrackBlock {
   reason: TrackBlockReason;
@@ -177,6 +189,18 @@ export interface PasswordBody {
   password: string;
 }
 
+/** A guest the host removed from the party. */
+export interface BannedGuest extends GuestTag {
+  /** Their phone is banned too (by its Wi-Fi hardware address), so a new session won't get them back in. */
+  device: boolean;
+}
+
+/** POST /api/admin/guests/:publicId/ban */
+export interface BanResult {
+  /** The phone itself could be recognised and is banned too. */
+  device: boolean;
+}
+
 /** GET /api/admin/status (host session required) */
 export interface AdminStatus {
   provider: 'spotify' | 'mock';
@@ -186,7 +210,7 @@ export interface AdminStatus {
   onHostMachine: boolean;
   devices: Device[];
   /** Guests the host removed. Unban with DELETE /api/admin/guests/:publicId/ban. */
-  banned: GuestTag[];
+  banned: BannedGuest[];
   voting: VotingStatus;
 }
 
@@ -252,7 +276,7 @@ export interface VotingStatus {
   problem: string | null;
 }
 
-/** POST /api/admin/vote */
+/** POST /api/admin/vote (shortcut for PUT /api/admin/settings { voteEnabled }) */
 export interface VotingToggle {
   enabled: boolean;
 }
@@ -295,10 +319,108 @@ export interface MySkip {
   voted: boolean;
 }
 
-/** POST /api/admin/skip-voting */
+/** POST /api/admin/skip-voting (shortcut for PUT /api/admin/settings { skipEnabled }) */
 export interface SkipVotingToggle {
   enabled: boolean;
 }
+
+// ---- House rules -------------------------------------------------------------
+
+/**
+ * Everything the host can change while the party runs. `.env` sets the defaults; the host's
+ * changes are saved and kept across restarts until they reset them.
+ */
+export interface Settings extends Limits {
+  voteEnabled: boolean;
+  /** How long guests can vote in each round. */
+  voteRoundSeconds: number;
+  /** Rounds run while fewer than this many songs are waiting. */
+  voteWhenFewerThan: number;
+  skipEnabled: boolean;
+  /** Share of the guests active lately whose votes skip a song. */
+  skipPercent: number;
+  /** Never fewer skip votes than this, so one guest alone can't skip. */
+  skipMinVotes: number;
+  /** Skip blocked songs (blacklist, explicit filter) that Spotify starts on its own. */
+  skipBlocked: boolean;
+}
+
+/** GET /api/admin/settings, PUT /api/admin/settings (any subset), POST /api/admin/settings/reset */
+export interface SettingsResponse {
+  settings: Settings;
+  /** What "reset to defaults" goes back to (from .env). */
+  defaults: Settings;
+}
+
+// ---- Blacklist ---------------------------------------------------------------
+
+export type BlacklistKind = 'song' | 'album' | 'artist';
+
+export interface BlacklistEntry {
+  kind: BlacklistKind;
+  /** Song: main artist id + title without version suffixes (every release). Album/artist: provider id. */
+  key: string;
+  /** Song title, album name or artist name. */
+  name: string;
+  /** Main artist's name, for songs and albums. */
+  artist: string | null;
+}
+
+export interface BlacklistItem extends BlacklistEntry {
+  addedAt: number;
+}
+
+/** GET /api/admin/blacklist */
+export interface BlacklistResponse {
+  items: BlacklistItem[];
+}
+
+/**
+ * POST /api/admin/blacklist: block a track's song, album or artist. The server looks the track up,
+ * so names always come from the provider. `artistId` picks which credited artist to block.
+ */
+export interface BlacklistAdd {
+  kind: BlacklistKind;
+  trackId: string;
+  artistId?: string;
+}
+
+export interface BlacklistAddResult {
+  item: BlacklistItem;
+  /** Waiting songs it took out of the queue. */
+  removedFromQueue: number;
+}
+
+/** POST /api/admin/blacklist/remove: returns the removed item (for undo). */
+export interface BlacklistRemove {
+  kind: BlacklistKind;
+  key: string;
+}
+
+/** The export file (GET /api/admin/blacklist/export). */
+export interface BlacklistFile {
+  app: 'midnight-box';
+  type: 'blacklist';
+  version: 1;
+  /** Ids only mean something to the service they came from. */
+  provider: 'spotify' | 'mock';
+  exportedAt: string;
+  items: BlacklistEntry[];
+}
+
+/** POST /api/admin/blacklist/import. `replace` drops the current list first. */
+export interface BlacklistImport {
+  mode: 'merge' | 'replace';
+  file: BlacklistFile;
+}
+
+export interface BlacklistImportResult {
+  /** Entries that weren't on the list yet. */
+  added: number;
+  total: number;
+  removedFromQueue: number;
+}
+// POST /api/admin/blacklist/clear empties the list and returns the old one (BlacklistResponse) for undo.
 
 /** GET /api/admin/cooldowns: what is cooling down right now. */
 export interface CooldownList {

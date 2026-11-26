@@ -26,6 +26,7 @@ const EnvSchema = z.object({
   GUEST_WINDOW_MINUTES: int(20, 1, 24 * 60),
   SONG_COOLDOWN_MINUTES: int(120, 0, 7 * 24 * 60),
   ARTIST_COOLDOWN_MINUTES: int(20, 0, 7 * 24 * 60),
+  ARTIST_MAX_SONGS: int(1, 1, 20),
   LASTFM_API_KEY: optional(
     z.string().trim().regex(/^[0-9a-f]{32}$/i, 'LASTFM_API_KEY should be the 32-character API key from last.fm/api/accounts'),
   ),
@@ -105,7 +106,9 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
       windowSongs: e.GUEST_WINDOW_SONGS,
       windowMinutes: e.GUEST_WINDOW_MINUTES,
       songCooldownMinutes: demoCap(e.SONG_COOLDOWN_MINUTES, 10),
+      artistMaxSongs: e.ARTIST_MAX_SONGS,
       artistCooldownMinutes: demoCap(e.ARTIST_COOLDOWN_MINUTES, 3),
+      noExplicit: false,
     },
     vote: {
       lastfmApiKey: e.LASTFM_API_KEY ?? null,

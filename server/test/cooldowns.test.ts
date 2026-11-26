@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Track } from '@shared/types';
 import { openDb } from '../src/db.js';
 import { songKey } from '../src/lib/tracks.js';
-import { CooldownService } from '../src/services/cooldowns.js';
+import { CooldownService, type CooldownOptions } from '../src/services/cooldowns.js';
 import { QueueService } from '../src/services/queue.js';
 
 const MIN = 60_000;
@@ -15,6 +15,7 @@ function track(id: string, name: string, ...artists: string[]): Track {
     name,
     artists: artists.map((a) => ({ id: `artist:${a}`, name: a })),
     album: 'Album',
+    albumId: 'album:1',
     imageUrl: null,
     durationMs: 200_000,
     explicit: false,
@@ -28,12 +29,13 @@ const duet = track('4', 'Together', 'Ada', 'Ben');
 const byFeature = track('5', 'Alone', 'Ben');
 const unrelated = track('6', 'Elsewhere', 'Cleo');
 
-function setup(opts = { songMs: 120 * MIN, artistMs: 20 * MIN }) {
+function setup(opts: Partial<CooldownOptions> = {}) {
   let t = T0;
   const now = () => t;
   const db = openDb(':memory:');
   const queue = new QueueService(db, now);
-  const cooldowns = new CooldownService(db, queue, opts, now);
+  const options: CooldownOptions = { songMs: 120 * MIN, artistMs: 20 * MIN, artistMaxSongs: 1, ...opts };
+  const cooldowns = new CooldownService(db, queue, () => options, now);
   const advance = (ms: number) => {
     t += ms;
   };
@@ -109,6 +111,35 @@ describe('CooldownService', () => {
     advance(MIN);
     queue.recordPlay(duet, null);
     expect(cooldowns.blockFor(duet, null)?.reason).toBe('song_cooldown');
+  });
+
+  it('lets an artist have several songs per window, then rests them until the oldest leaves it', () => {
+    // At most 3 songs by one artist per 30 minutes.
+    const { queue, cooldowns, advance } = setup({ artistMs: 30 * MIN, artistMaxSongs: 3 });
+    const ada = (n: number) => track(`ada-${n}`, `Ada song ${n}`, 'Ada');
+    queue.recordPlay(ada(1), null);
+    advance(5 * MIN);
+    queue.recordPlay(ada(2), null);
+    advance(5 * MIN);
+    expect(cooldowns.blockFor(ada(3), null)).toBeNull();
+    expect(cooldowns.list().artists).toEqual([]);
+
+    queue.recordPlay(ada(3), null);
+    advance(5 * MIN);
+    // Three in the window: free again when the first one (at T0) is 30 minutes old.
+    expect(cooldowns.blockFor(ada(4), null)).toEqual({ reason: 'artist_cooldown', availableAt: T0 + 30 * MIN });
+    expect(cooldowns.list().artists).toEqual([
+      { key: 'artist:Ada', artist: { id: 'artist:Ada', name: 'Ada' }, until: T0 + 30 * MIN },
+    ]);
+
+    advance(15 * MIN);
+    expect(cooldowns.blockFor(ada(4), null)).toBeNull();
+  });
+
+  it('still allows only one waiting song per artist when several per window are allowed', () => {
+    const { queue, cooldowns } = setup({ artistMaxSongs: 3 });
+    queue.add(song, null);
+    expect(cooldowns.blockFor(sameArtist, null)?.reason).toBe('artist_queued');
   });
 
   it('can be switched off', () => {

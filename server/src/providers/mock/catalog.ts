@@ -32,6 +32,7 @@ export const MOCK_CATALOG: Track[] = ARTISTS.flatMap((artist) =>
       name: title,
       artists: [{ id: `mock:${slug(artist.name)}`, name: artist.name }],
       album: artist.album,
+      albumId: `mock:album:${slug(artist.album)}`,
       imageUrl: null,
       durationMs: seconds * 1000,
       explicit: explicit ?? false,

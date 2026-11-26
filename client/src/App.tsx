@@ -1,4 +1,4 @@
-import { AdminPage } from './pages/AdminPage';
+import { AdminPage } from './pages/admin/AdminPage';
 import { GuestPage } from './pages/GuestPage';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { TvPage } from './pages/TvPage';

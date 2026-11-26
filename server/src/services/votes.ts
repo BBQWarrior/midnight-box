@@ -1,13 +1,15 @@
-import type { MyVotes, Track, VoteResult, VoteState, VotingStatus } from '@shared/types';
-import { type Db, kvGet, kvSet } from '../db.js';
+import type { MyVotes, Track, TrackBlock, VoteResult, VoteState, VotingStatus } from '@shared/types';
+import type { Db } from '../db.js';
 import { LruCache } from '../lib/cache.js';
 import { baseTitle, mainArtist, songKey } from '../lib/tracks.js';
 import type { MusicProvider, SongRef, SuggestionSource } from '../providers/types.js';
-import type { CooldownService } from './cooldowns.js';
 import type { Log, Player } from './player.js';
 import type { QueueService } from './queue.js';
 
+/** Read on every use, so the host's changes apply at once. */
 export interface VoteOptions {
+  /** The host's on/off switch. */
+  enabled: boolean;
   /** How long guests can vote in each round. */
   roundMs: number;
   /** Rounds only run while fewer than this many songs are waiting. */
@@ -24,7 +26,8 @@ interface VoteDeps {
   /** Null when no suggestion service is configured: vote rounds are off. */
   source: SuggestionSource | null;
   queue: QueueService;
-  cooldowns: CooldownService;
+  /** Whether a song could be queued right now (TrackRules). */
+  rules: { blockFor(track: Track, playing: Track | null): TrackBlock | null };
   player: Player;
   log: Log;
   /** Called whenever what guests see may have changed. */
@@ -48,8 +51,6 @@ interface Round {
 }
 
 export type VoteOutcome = MyVotes | 'closed' | 'not_a_candidate';
-
-const ENABLED_KEY = 'voting_enabled';
 /** Provider lookups allowed per round start; resolved songs are cached, so later rounds are cheaper. */
 const MAX_LOOKUPS = 12;
 
@@ -76,7 +77,7 @@ export class VoteService {
 
   constructor(
     private readonly deps: VoteDeps,
-    private readonly opts: VoteOptions,
+    private readonly options: () => VoteOptions,
   ) {
     this.now = deps.now ?? Date.now;
     this.shuffle = deps.shuffle ?? fisherYates;
@@ -91,14 +92,17 @@ export class VoteService {
     this.timer = null;
   }
 
-  get enabled(): boolean {
-    return kvGet(this.deps.db, ENABLED_KEY) !== '0';
+  private get opts(): VoteOptions {
+    return this.options();
   }
 
-  /** Host switch. Turning voting off cancels the round in progress. */
-  setEnabled(enabled: boolean): void {
-    kvSet(this.deps.db, ENABLED_KEY, enabled ? '1' : '0');
-    if (!enabled) this.round = null;
+  get enabled(): boolean {
+    return this.opts.enabled;
+  }
+
+  /** Call after the host changed the settings: switching rounds off cancels the one in progress. */
+  settingsChanged(): void {
+    if (!this.enabled) this.round = null;
     this.problem = null;
     this.retryAt = 0;
     this.deps.onChange();
@@ -223,7 +227,7 @@ export class VoteService {
    * Songs already offered for this base song are skipped until the suggestions run out.
    */
   private async pickCandidates(base: Track): Promise<Track[]> {
-    const { source, provider, cooldowns } = this.deps;
+    const { source, provider, rules } = this.deps;
     if (!source) return [];
     const baseKey = songKey(base);
     if (this.offeredFor !== baseKey) {
@@ -250,7 +254,7 @@ export class VoteService {
           this.resolved.set(cacheKey, found);
         }
         const track = found;
-        if (!track || cooldowns.blockFor(track, base)) continue;
+        if (!track || rules.blockFor(track, base)) continue;
         if (picked.some((p) => songKey(p) === songKey(track) || mainArtist(p)?.id === mainArtist(track)?.id)) continue;
         picked.push(track);
         pickedRefs.push(cacheKey);
@@ -275,13 +279,13 @@ export class VoteService {
     const round = this.round;
     if (!round) return;
     this.round = null;
-    const { queue, cooldowns, player, log } = this.deps;
+    const { queue, rules, player, log } = this.deps;
 
     const reachedAt = (c: Candidate) => Math.max(...c.voters.values());
     const ranked = round.candidates
       .filter((c) => c.voters.size > 0)
       .sort((a, b) => b.voters.size - a.voters.size || reachedAt(a) - reachedAt(b));
-    const winner = ranked.find((c) => !cooldowns.blockFor(c.track, this.playing()));
+    const winner = ranked.find((c) => !rules.blockFor(c.track, this.playing()));
 
     if (winner) {
       queue.add(winner.track, null, 'vote');

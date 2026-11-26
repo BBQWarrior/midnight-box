@@ -2,6 +2,16 @@ import type {
   AddToQueueResponse,
   AdminStatus,
   ApiError,
+  BanResult,
+  BlacklistAdd,
+  BlacklistAddResult,
+  BlacklistImport,
+  BlacklistImportResult,
+  BlacklistItem,
+  BlacklistRemove,
+  BlacklistResponse,
+  Settings,
+  SettingsResponse,
   ClearCooldown,
   CooldownList,
   HostSession,
@@ -105,7 +115,7 @@ export const api = {
   disconnectSpotify: () => request<void>('/api/admin/spotify/disconnect', { method: 'POST' }),
   adminLogout: () => request<void>('/api/admin/logout', { method: 'POST' }),
   banGuest: (publicId: string) =>
-    request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'POST' }),
+    request<BanResult>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'POST' }),
   unbanGuest: (publicId: string) =>
     request<void>(`/api/admin/guests/${encodeURIComponent(publicId)}/ban`, { method: 'DELETE' }),
   getCooldowns: () => request<CooldownList>('/api/admin/cooldowns'),
@@ -121,4 +131,23 @@ export const api = {
   endVoteRound: () => request<void>('/api/admin/vote/end', { method: 'POST' }),
   clearCooldown: (body: ClearCooldown) =>
     request<void>('/api/admin/cooldowns/clear', { method: 'POST', body: json(body) }),
+  getSettings: () => request<SettingsResponse>('/api/admin/settings'),
+  updateSettings: (patch: Partial<Settings>) =>
+    request<SettingsResponse>('/api/admin/settings', { method: 'PUT', body: json(patch) }),
+  resetSettings: () => request<SettingsResponse>('/api/admin/settings/reset', { method: 'POST' }),
+  hostSearch: (q: string, offset: number, signal?: AbortSignal) =>
+    request<SearchResponse>(
+      `/api/admin/search?q=${encodeURIComponent(q)}&offset=${offset}`,
+      signal ? { signal } : undefined,
+    ),
+  getBlacklist: () => request<BlacklistResponse>('/api/admin/blacklist'),
+  block: (body: BlacklistAdd) =>
+    request<BlacklistAddResult>('/api/admin/blacklist', { method: 'POST', body: json(body) }),
+  unblock: (body: BlacklistRemove) =>
+    request<BlacklistItem>('/api/admin/blacklist/remove', { method: 'POST', body: json(body) }),
+  clearBlacklist: () => request<BlacklistResponse>('/api/admin/blacklist/clear', { method: 'POST' }),
+  importBlacklist: (body: BlacklistImport) =>
+    request<BlacklistImportResult>('/api/admin/blacklist/import', { method: 'POST', body: json(body) }),
 };
+/** The file download link for the blacklist (a plain link, so the browser saves it). */
+export const BLACKLIST_EXPORT_URL = '/api/admin/blacklist/export';

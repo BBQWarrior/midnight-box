@@ -4,6 +4,7 @@ import {
   ProviderError,
   ProviderNotReadyError,
 } from '../providers/types.js';
+import type { Track } from '@shared/types';
 import type { QueueService } from './queue.js';
 
 export interface PlayerOptions {
@@ -33,6 +34,11 @@ interface PlayerDeps {
   queue: QueueService;
   /** Called after every tick that may have changed what guests see. */
   onChange: () => void;
+  /**
+   * Why a song that just started should be skipped at once (the host blocked it), or null.
+   * Covers songs Spotify starts on its own, which never went through the guests' rules.
+   */
+  skipReason?: (track: Track) => string | null;
   log: Log;
   now?: () => number;
 }
@@ -154,6 +160,14 @@ export class Player {
     if (uri !== this.lastUri) {
       this.onTrackChanged(pb);
       this.lastUri = uri;
+      const reason = pb?.track && pb.isPlaying ? (this.deps.skipReason?.(pb.track) ?? null) : null;
+      if (pb?.track && reason) {
+        this.deps.log.info(`Skipped "${pb.track.name}": ${reason}`);
+        // skip() pokes the loop, so the next song shows up right after this tick.
+        await this.skip();
+        this.deps.onChange();
+        return this.opts.pollMs;
+      }
     }
     if (this.verifyPushed) await this.verifyPushedEntry();
     await this.maybePushNext(pb);

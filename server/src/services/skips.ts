@@ -1,11 +1,16 @@
 import type { MySkip, SkipResult, SkipState, Track } from '@shared/types';
-import { type Db, kvGet, kvSet } from '../db.js';
+import type { Db } from '../db.js';
 import type { GuestService } from './guests.js';
 import type { Log, Player } from './player.js';
 
+/** Read on every use, so the host's changes apply at once. */
 export interface SkipOptions {
+  /** The host's on/off switch. */
+  enabled: boolean;
   /** Guests count towards the target this long after their last request. */
   activeMs: number;
+  /** Share of the active guests (percent) whose votes skip a song. */
+  percent: number;
   /** Never fewer votes than this, so one guest alone can't skip. */
   minVotes: number;
 }
@@ -21,8 +26,6 @@ interface SkipDeps {
 }
 
 export type SkipOutcome = MySkip | 'disabled' | 'ended' | 'paused';
-
-const ENABLED_KEY = 'skip_voting_enabled';
 
 /**
  * Vote to skip: once enough guests vote against the song that is playing, it's skipped.
@@ -41,19 +44,18 @@ export class SkipService {
 
   constructor(
     private readonly deps: SkipDeps,
-    private readonly opts: SkipOptions,
+    private readonly options: () => SkipOptions,
   ) {
     this.now = deps.now ?? Date.now;
   }
 
   get enabled(): boolean {
-    return kvGet(this.deps.db, ENABLED_KEY) !== '0';
+    return this.options().enabled;
   }
 
-  /** Host switch. Turning it off drops the votes so far. */
-  setEnabled(enabled: boolean): void {
-    kvSet(this.deps.db, ENABLED_KEY, enabled ? '1' : '0');
-    if (!enabled) this.reset(null);
+  /** Call after the host changed the settings: switching skip votes off drops the votes so far. */
+  settingsChanged(): void {
+    if (!this.enabled) this.reset(null);
     this.deps.onChange();
   }
 
@@ -118,10 +120,11 @@ export class SkipService {
     this.lastSkip = { track, votes, at: this.now() };
   }
 
-  /** Half the guests active lately, rounded up, but never fewer than `minVotes`. */
+  /** The host's share (half by default) of the guests active lately, rounded up, but never fewer than `minVotes`. */
   private target(): number {
-    const active = this.deps.guests.activeDevices(this.now() - this.opts.activeMs);
-    return Math.max(this.opts.minVotes, Math.ceil(active / 2));
+    const { activeMs, percent, minVotes } = this.options();
+    const active = this.deps.guests.activeDevices(this.now() - activeMs);
+    return Math.max(minVotes, Math.ceil((active * percent) / 100));
   }
 
   private playing(): Track | null {

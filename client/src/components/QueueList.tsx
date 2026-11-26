@@ -1,115 +1,93 @@
-import { useState } from 'react';
-import { ListMusic, UserX, X } from 'lucide-react';
-import type { GuestTag, QueueEntry } from '@shared/types';
+import { useState, type ReactNode } from 'react';
+import { ListMusic, MoreHorizontal } from 'lucide-react';
+import type { QueueEntry } from '@shared/types';
+import { artistNames } from '../lib/format';
 import { Badge } from './Badge';
 import { CoverLink } from './Spotify';
+import { Button, Card } from './ui';
 
 interface Props {
   queue: QueueEntry[];
   myPublicId?: string | undefined;
   onAddSongs?: () => void;
-  onRemove?: (entry: QueueEntry) => void;
-  removingId?: number | null;
-  onBan?: (guest: GuestTag) => void;
+  /** Host panel: what to show when a row's "more" button is pressed (remove, block, remove guest). */
+  renderActions?: (entry: QueueEntry, close: () => void) => ReactNode;
   /** Real Spotify content (not demo mode): covers link to Spotify. */
   spotify?: boolean;
 }
 
-export function QueueList({ queue, myPublicId, onAddSongs, onRemove, removingId, onBan, spotify = false }: Props) {
-  const [confirmBan, setConfirmBan] = useState<string | null>(null);
+export function QueueList({ queue, myPublicId, onAddSongs, renderActions, spotify = false }: Props) {
+  const [open, setOpen] = useState<number | null>(null);
 
   if (queue.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/5 px-6 py-10 text-center backdrop-blur-xl">
-        <ListMusic size={32} className="text-white/40" aria-hidden="true" />
-        <p className="font-medium">The queue is empty</p>
-        <p className="text-sm text-white/60">Be the first to pick a track.</p>
+      <Card className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+        <ListMusic size={28} className="text-faint" aria-hidden="true" />
+        <p className="mt-1 font-semibold">The queue is empty</p>
+        <p className="text-sm text-muted">Be the first to pick a track.</p>
         {onAddSongs && (
-          <button
-            type="button"
-            onClick={onAddSongs}
-            className="mt-1 min-h-11 rounded-full bg-linear-to-r from-accent to-accent-2 px-6 font-semibold text-white"
-          >
+          <Button variant="primary" className="mt-3 px-6" onClick={onAddSongs}>
             Add songs
-          </button>
+          </Button>
         )}
-      </div>
+      </Card>
     );
   }
 
   return (
-    <ol className="flex flex-col gap-2">
-      {queue.map((entry) => {
-        const mine = myPublicId !== undefined && entry.requestedBy?.publicId === myPublicId;
-        return (
-          <li
-            key={entry.id}
-            className={`flex items-center gap-3 rounded-2xl border p-2.5 backdrop-blur-xl ${
-              mine ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-white/5'
-            }`}
-          >
-            <CoverLink track={entry.track} spotify={spotify} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <p className="truncate text-sm font-medium" title={entry.track.name}>{entry.track.name}</p>
-                {entry.track.explicit && <Badge tone="explicit" label="Explicit">E</Badge>}
-              </div>
-              <p className="truncate text-xs text-white/60" title={entry.track.artists.map((a) => a.name).join(', ')}>
-                {entry.track.artists.map((a) => a.name).join(', ')}
-              </p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/50">
-                {entry.votePick ? (
-                  <Badge tone="cyan">Vote pick</Badge>
-                ) : (
-                  <span className="truncate">{entry.requestedBy?.name ?? 'Host'}</span>
+    <Card>
+      <ol className="divide-y divide-line">
+        {queue.map((entry, i) => {
+          const mine = myPublicId !== undefined && entry.requestedBy?.publicId === myPublicId;
+          const expanded = open === entry.id;
+          return (
+            <li key={entry.id} className={mine ? 'bg-accent-soft' : ''}>
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <span className="w-4 shrink-0 text-right text-xs text-faint tabular-nums">{i + 1}</span>
+                <CoverLink track={entry.track} spotify={spotify} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate text-sm font-semibold" title={entry.track.name}>
+                      {entry.track.name}
+                    </p>
+                    {entry.track.explicit && (
+                      <Badge tone="explicit" label="Explicit">
+                        E
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-[13px] text-muted" title={artistNames(entry.track.artists)}>
+                    {artistNames(entry.track.artists)}
+                  </p>
+                  <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-faint">
+                    {entry.votePick ? (
+                      <Badge tone="accent">Vote pick</Badge>
+                    ) : (
+                      <span className="truncate">{entry.requestedBy?.name ?? 'Host'}</span>
+                    )}
+                    {mine && <Badge tone="accent">You</Badge>}
+                    {entry.status === 'pushed' && <Badge>Up next</Badge>}
+                  </p>
+                </div>
+                {renderActions && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-expanded={expanded}
+                    aria-label={`Actions for ${entry.track.name}`}
+                    onClick={() => setOpen(expanded ? null : entry.id)}
+                  >
+                    <MoreHorizontal size={18} aria-hidden="true" />
+                  </Button>
                 )}
-                {mine && <Badge tone="accent">You</Badge>}
-                {entry.status === 'pushed' && <Badge tone="cyan">Up next</Badge>}
-              </p>
-              {onBan && entry.requestedBy && (
-                <p className="mt-1 flex items-center gap-2 text-xs">
-                  {confirmBan === entry.requestedBy.publicId ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (entry.requestedBy) onBan(entry.requestedBy);
-                          setConfirmBan(null);
-                        }}
-                        className="min-h-8 rounded-full border border-rose-400/40 bg-rose-500/20 px-3 font-semibold text-rose-100"
-                      >
-                        Yes, remove {entry.requestedBy.name}
-                      </button>
-                      <button type="button" onClick={() => setConfirmBan(null)} className="min-h-8 px-2 text-white/60">
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmBan(entry.requestedBy?.publicId ?? null)}
-                      className="flex min-h-8 items-center gap-1 rounded-full px-2 text-rose-200/80 hover:bg-white/10"
-                    >
-                      <UserX size={12} aria-hidden="true" /> Remove guest
-                    </button>
-                  )}
-                </p>
+              </div>
+              {renderActions && expanded && (
+                <div className="flex flex-wrap gap-2 px-3 pb-3 pl-[4.75rem]">{renderActions(entry, () => setOpen(null))}</div>
               )}
-            </div>
-            {onRemove && (
-              <button
-                type="button"
-                aria-label={`Remove ${entry.track.name} from the queue`}
-                disabled={removingId === entry.id}
-                onClick={() => onRemove(entry)}
-                className="flex size-11 shrink-0 items-center justify-center rounded-full text-white/70 hover:bg-white/10 disabled:opacity-40"
-              >
-                <X size={18} />
-              </button>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+    </Card>
   );
 }

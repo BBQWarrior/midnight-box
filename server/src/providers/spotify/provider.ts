@@ -24,7 +24,7 @@ const SpotifyTrack = z.object({
   duration_ms: z.number(),
   explicit: z.boolean(),
   artists: z.array(z.object({ id: z.string().nullable(), name: z.string() })),
-  album: z.object({ name: z.string(), images: z.array(SpotifyImage).optional() }).optional(),
+  album: z.object({ id: z.string().nullish(), name: z.string(), images: z.array(SpotifyImage).optional() }).optional(),
 });
 type SpotifyTrack = z.infer<typeof SpotifyTrack>;
 
@@ -68,6 +68,7 @@ function toTrack(raw: unknown): Track | null {
     name: t.name,
     artists: t.artists.map((a) => ({ id: a.id ?? a.name, name: a.name })),
     album: t.album?.name ?? '',
+    albumId: t.album?.id ?? null,
     imageUrl: pickImage(t.album?.images),
     durationMs: t.duration_ms,
     explicit: t.explicit,

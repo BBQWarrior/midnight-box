@@ -9,6 +9,7 @@ const track: Track = {
   name: 'Heroes - 2017 Remaster',
   artists: [{ id: 'bowie', name: 'David Bowie' }],
   album: 'Heroes',
+  albumId: null,
   imageUrl: null,
   durationMs: 371_000,
   explicit: false,

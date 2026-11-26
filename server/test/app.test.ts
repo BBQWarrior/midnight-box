@@ -3,6 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AddToQueueResponse,
   AdminStatus,
+  BanResult,
+  BlacklistAddResult,
+  BlacklistFile,
+  BlacklistImportResult,
+  BlacklistItem,
+  BlacklistResponse,
+  SettingsResponse,
   CooldownList,
   HostSession,
   Limits,
@@ -18,15 +25,11 @@ import { buildApp } from '../src/http/app.js';
 import { MOCK_CATALOG } from '../src/providers/mock/catalog.js';
 import { MockProvider } from '../src/providers/mock/provider.js';
 import { MockSuggestions } from '../src/providers/mock/suggestions.js';
+import type { MacLookup } from '../src/lib/arp.js';
 import { SpotifyAuth } from '../src/providers/spotify/auth.js';
-import { CooldownService } from '../src/services/cooldowns.js';
-import { GuestService } from '../src/services/guests.js';
-import { HostAuth } from '../src/services/host-auth.js';
-import { Player } from '../src/services/player.js';
-import { QueueService } from '../src/services/queue.js';
-import { StateHub } from '../src/services/state.js';
-import { SkipService } from '../src/services/skips.js';
-import { VoteService } from '../src/services/votes.js';
+import { createServices } from '../src/services/container.js';
+import type { Player } from '../src/services/player.js';
+import type { VoteService } from '../src/services/votes.js';
 
 const MIN = 60_000;
 const T0 = 1_700_000_000_000;
@@ -52,7 +55,9 @@ const baseConfig: Config = {
     windowSongs: 10,
     windowMinutes: 20,
     songCooldownMinutes: 120,
+    artistMaxSongs: 1,
     artistCooldownMinutes: 20,
+    noExplicit: false,
   },
   vote: { lastfmApiKey: null, roundMs: 30_000, maxWaiting: 2 },
   dataDir: '',
@@ -68,7 +73,7 @@ let db: Db;
 let spotifyAuth: SpotifyAuth | null;
 const REDIRECT = 'http://127.0.0.1:8080/auth/spotify/callback';
 
-async function makeApp(limits: Partial<Limits> = {}, withSpotify = false) {
+async function makeApp(limits: Partial<Limits> = {}, withSpotify = false, macLookup: MacLookup = async () => null) {
   let t = T0;
   const now = () => t;
   advance = (ms) => {
@@ -83,51 +88,23 @@ async function makeApp(limits: Partial<Limits> = {}, withSpotify = false) {
     spotifyAuth = new SpotifyAuth(db, 'test-client-id', REDIRECT);
   }
   const provider = new MockProvider({ startPlaying: true, now });
-  const queue = new QueueService(db, now);
-  const guests = new GuestService(db, now);
-  const cooldowns = new CooldownService(
+  const services = createServices({
     db,
-    queue,
-    { songMs: config.limits.songCooldownMinutes * MIN, artistMs: config.limits.artistCooldownMinutes * MIN },
+    config,
+    provider,
+    suggestions: new MockSuggestions(MOCK_CATALOG),
+    player: { pollMs: 1_000, idlePollMs: 1_000, pushAheadMs: 1_000, autoStartCooldownMs: 0 },
+    macLookup,
+    log: silent,
     now,
-  );
-  const hostAuth = new HostAuth(db, now);
-  player = new Player(
-    { provider, queue, onChange: () => {}, log: silent, now },
-    { pollMs: 1_000, idlePollMs: 1_000, pushAheadMs: 1_000, autoStartCooldownMs: 0 },
-  );
-  votes = new VoteService(
-    {
-      db,
-      provider,
-      source: new MockSuggestions(MOCK_CATALOG),
-      queue,
-      cooldowns,
-      player,
-      log: silent,
-      onChange: () => {},
-      now,
-      shuffle: (items) => items,
-    },
-    { roundMs: config.vote.roundMs, maxWaiting: config.vote.maxWaiting, candidates: 4, retryMs: 30_000 },
-  );
-  const skips = new SkipService(
-    { db, guests, player, log: silent, onChange: () => {}, now },
-    { activeMs: 15 * MIN, minVotes: 2 },
-  );
-  const hub = new StateHub({ provider, queue, player, votes, skips, limits: config.limits, demo: true, now });
+    shuffle: (items) => items,
+  });
+  ({ player, votes } = services);
   ({ app } = await buildApp({
+    ...services,
     config,
     provider,
     spotifyAuth,
-    guests,
-    queue,
-    cooldowns,
-    hostAuth,
-    player,
-    votes,
-    skips,
-    hub,
     joinInfo: { joinUrl: 'http://192.168.1.10:8080/', qrDataUrl: 'data:image/svg+xml;base64,' },
     cookieSecret: 'test-cookie-secret-that-is-long-enough',
     logger: false,
@@ -334,7 +311,8 @@ describe('banning', () => {
     const publicId = added.added[0]!.requestedBy!.publicId;
 
     const ban = await app.inject({ method: 'POST', url: `/api/admin/guests/${publicId}/ban`, cookies: host });
-    expect(ban.statusCode).toBe(204);
+    // The test network has no neighbour table, so only the session and address are banned.
+    expect(ban.json<BanResult>()).toEqual({ device: false });
     expect((await state()).queue).toEqual([]);
     expect((await queueSongs(alex, [t2], GUEST_IP)).statusCode).toBe(403);
     // Clearing cookies doesn't help: the address is blocked too.
@@ -343,7 +321,7 @@ describe('banning', () => {
     expect((await queueSongs(await join('Sam', '192.168.1.31'), [t2], '192.168.1.31')).statusCode).toBe(200);
 
     const panel = (await app.inject({ method: 'GET', url: '/api/admin/status', cookies: host })).json<AdminStatus>();
-    expect(panel.banned).toEqual([{ publicId, name: 'Alex' }]);
+    expect(panel.banned).toEqual([{ publicId, name: 'Alex', device: false }]);
 
     await app.inject({ method: 'DELETE', url: `/api/admin/guests/${publicId}/ban`, cookies: host });
     expect((await queueSongs(alex, [t3], GUEST_IP)).statusCode).toBe(200);
@@ -582,6 +560,202 @@ describe('Spotify disconnect', () => {
     expect(spotifyAuth?.isConnected()).toBe(false);
     expect(new SpotifyAuth(db, 'test-client-id', REDIRECT).isConnected()).toBe(false);
     expect((await cooldowns()).songs).toHaveLength(0);
+  });
+});
+
+describe('house rules', () => {
+  const put = (cookies: Record<string, string>, payload: object) =>
+    app.inject({ method: 'PUT', url: '/api/admin/settings', cookies, payload });
+
+  it('lets the host change the limits while the party runs, and guests see them at once', async () => {
+    await makeApp({ windowSongs: 1, maxPendingPerGuest: 5, maxPerRequest: 1 });
+    const host = await setUpHost();
+    const alex = await join();
+    await queueSongs(alex, [t1]);
+    expect((await queueSongs(alex, [t2])).json<AddToQueueResponse>().rejected[0]?.reason).toBe('too_soon');
+
+    const res = await put(host, { windowSongs: 3, maxPerRequest: 2 });
+    expect(res.json<SettingsResponse>().settings).toMatchObject({ windowSongs: 3, maxPerRequest: 2 });
+    expect(res.json<SettingsResponse>().defaults).toMatchObject({ windowSongs: 1, maxPerRequest: 1 });
+    expect((await state()).limits).toMatchObject({ windowSongs: 3, maxPerRequest: 2 });
+    expect((await queueSongs(alex, [t2, t3])).json<AddToQueueResponse>().added).toHaveLength(2);
+
+    const reset = await app.inject({ method: 'POST', url: '/api/admin/settings/reset', cookies: host, payload: {} });
+    expect(reset.json<SettingsResponse>().settings.windowSongs).toBe(1);
+    expect((await state()).limits.windowSongs).toBe(1);
+  });
+
+  it('rejects bad values and combinations, and needs a host session', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    expect((await put(host, { windowSongs: 0 })).statusCode).toBe(400);
+    expect((await put(host, { windowSongs: '5' })).statusCode).toBe(400);
+    expect((await put(host, { madeUp: 1 })).statusCode).toBe(400);
+    const combo = await put(host, { maxPendingPerGuest: 2, maxPerRequest: 3 });
+    expect(combo.statusCode).toBe(400);
+    expect(combo.json<{ error: { message: string } }>().error.message).toMatch(/waiting at once/);
+    expect((await put({}, { windowSongs: 5 })).statusCode).toBe(401);
+  });
+
+  it('turns explicit songs off: search marks them, and waiting ones leave the queue', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const explicit = MOCK_CATALOG.find((t) => t.explicit)!;
+    const alex = await join();
+    await queueSongs(alex, [explicit.id]);
+    expect((await state()).queue).toHaveLength(1);
+
+    await put(host, { noExplicit: true });
+    expect((await state()).queue).toHaveLength(0);
+    expect((await state()).limits.noExplicit).toBe(true);
+    const q = encodeURIComponent(explicit.name);
+    const res = await app.inject({ method: 'GET', url: `/api/search?q=${q}`, cookies: alex });
+    expect(res.json<SearchResponse>().results.find((r) => r.track.id === explicit.id)?.block?.reason).toBe('explicit');
+  });
+
+  it('lets an artist play several songs per window when the host allows it', async () => {
+    await makeApp({ artistMaxSongs: 2, artistCooldownMinutes: 30 });
+    const alex = await join();
+    // The mock starts on catalog song 0; songs 1 and 2 are by the same artist.
+    await player.tick();
+    const res = (await queueSongs(alex, [MOCK_CATALOG[1]!.id])).json<AddToQueueResponse>();
+    expect(res.added).toHaveLength(1);
+  });
+});
+
+describe('blacklist', () => {
+  const block = (cookies: Record<string, string>, payload: object) =>
+    app.inject({ method: 'POST', url: '/api/admin/blacklist', cookies, payload });
+  const list = async (cookies: Record<string, string>) =>
+    (await app.inject({ method: 'GET', url: '/api/admin/blacklist', cookies })).json<BlacklistResponse>().items;
+  const blocks = async (cookies: Record<string, string>, q: string) =>
+    (await app.inject({ method: 'GET', url: `/api/search?q=${q}`, cookies }))
+      .json<SearchResponse>()
+      .results.map((r) => r.block?.reason ?? null);
+
+  it('blocks a song: guests see it, can no longer queue it, and a waiting copy leaves the queue', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const alex = await join();
+    await queueSongs(alex, [t1]);
+
+    const res = (await block(host, { kind: 'song', trackId: t1 })).json<BlacklistAddResult>();
+    expect(res.item).toMatchObject({ kind: 'song', name: 'Gravity Waltz', artist: 'The Velvet Satellites' });
+    expect(res.removedFromQueue).toBe(1);
+    expect((await state()).queue).toEqual([]);
+    expect((await blocks(alex, 'gravity'))[0]).toBe('blacklisted');
+    expect((await queueSongs(alex, [t1])).json<AddToQueueResponse>().rejected[0]?.reason).toBe('blacklisted');
+    // Blocking it again changes nothing.
+    await block(host, { kind: 'song', trackId: t1 });
+    expect(await list(host)).toHaveLength(1);
+  });
+
+  it('blocks whole artists and albums', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const alex = await join();
+    await block(host, { kind: 'artist', trackId: t1 });
+    await block(host, { kind: 'album', trackId: t2 });
+    expect(await blocks(alex, 'velvet')).toEqual(['blacklisted', 'blacklisted', 'blacklisted']);
+    expect(await blocks(alex, 'juno')).toEqual(['blacklisted', 'blacklisted', 'blacklisted']);
+    expect((await block(host, { kind: 'artist', trackId: t1, artistId: 'mock:nobody' })).statusCode).toBe(400);
+  });
+
+  it('removes, clears and restores entries', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    await block(host, { kind: 'song', trackId: t1 });
+    await block(host, { kind: 'song', trackId: t2 });
+    const [newest] = await list(host);
+
+    const removed = await app.inject({
+      method: 'POST',
+      url: '/api/admin/blacklist/remove',
+      cookies: host,
+      payload: { kind: newest!.kind, key: newest!.key },
+    });
+    expect(removed.json<BlacklistItem>().name).toBe(newest!.name);
+    expect(await list(host)).toHaveLength(1);
+
+    const cleared = await app.inject({ method: 'POST', url: '/api/admin/blacklist/clear', cookies: host, payload: {} });
+    expect(cleared.json<BlacklistResponse>().items).toHaveLength(1);
+    expect(await list(host)).toEqual([]);
+  });
+
+  it('exports and imports the list, merging or replacing, and refuses files from another service', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    await block(host, { kind: 'song', trackId: t1 });
+    await block(host, { kind: 'artist', trackId: t2 });
+    const exported = await app.inject({ method: 'GET', url: '/api/admin/blacklist/export', cookies: host });
+    expect(exported.headers['content-disposition']).toMatch(/attachment; filename="midnight-box-blacklist-/);
+    const file = exported.json<BlacklistFile>();
+    expect(file).toMatchObject({ app: 'midnight-box', type: 'blacklist', version: 1, provider: 'mock' });
+    expect(file.items.map((i) => i.kind)).toEqual(['song', 'artist']);
+
+    const importFile = (payload: object) =>
+      app.inject({ method: 'POST', url: '/api/admin/blacklist/import', cookies: host, payload });
+    await app.inject({ method: 'POST', url: '/api/admin/blacklist/clear', cookies: host, payload: {} });
+    await block(host, { kind: 'song', trackId: t3 });
+
+    expect((await importFile({ mode: 'merge', file })).json<BlacklistImportResult>()).toMatchObject({ added: 2, total: 3 });
+    expect((await importFile({ mode: 'replace', file })).json<BlacklistImportResult>()).toMatchObject({ added: 2, total: 2 });
+    expect((await importFile({ mode: 'merge', file: { ...file, provider: 'spotify' } })).statusCode).toBe(400);
+    expect((await importFile({ mode: 'merge', file: { hello: 'world' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/blacklist/export' })).statusCode).toBe(401);
+  });
+
+  /** A fresh app whose first song is on the blacklist; returns what plays after the player looks. */
+  async function blockedStart(skipBlocked: boolean): Promise<string | undefined> {
+    await makeApp();
+    const host = await setUpHost();
+    await app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: host, payload: { skipBlocked } });
+    await block(host, { kind: 'song', trackId: MOCK_CATALOG[0]!.id });
+    await player.tick();
+    await player.tick();
+    return (await state()).nowPlaying?.track.id;
+  }
+
+  it('skips a blocked song that Spotify starts on its own, unless the host turned that off', async () => {
+    expect(await blockedStart(true)).not.toBe(MOCK_CATALOG[0]!.id);
+    expect(await blockedStart(false)).toBe(MOCK_CATALOG[0]!.id);
+  });
+
+  it('lets the host search for things to block', async () => {
+    await makeApp();
+    const host = await setUpHost();
+    const res = await app.inject({ method: 'GET', url: '/api/admin/search?q=velvet', cookies: host });
+    expect(res.json<SearchResponse>().results).toHaveLength(3);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/search?q=velvet' })).statusCode).toBe(401);
+  });
+});
+
+describe('device bans', () => {
+  const MAC = 'aa:bb:cc:dd:ee:01';
+  // The same phone on two addresses (its lease changed), and another phone.
+  const macs: Record<string, string> = { '192.168.1.30': MAC, '192.168.1.40': MAC, '192.168.1.31': 'aa:bb:cc:dd:ee:02' };
+  const lookup: MacLookup = async (ip) => macs[ip] ?? null;
+  const me = (remoteAddress: string, cookies?: Record<string, string>) =>
+    app.inject({ method: 'GET', url: '/api/me', remoteAddress, ...(cookies ? { cookies } : {}) });
+
+  it('bans the phone itself: a new session on a new address stays out, until the host unbans', async () => {
+    await makeApp({}, false, lookup);
+    const host = await setUpHost();
+    const alex = await join('Alex', '192.168.1.30');
+    const publicId = (await me('192.168.1.30', alex)).json<Me>().publicId;
+
+    const ban = await app.inject({ method: 'POST', url: `/api/admin/guests/${publicId}/ban`, cookies: host });
+    expect(ban.json<BanResult>()).toEqual({ device: true });
+    const panel = (await app.inject({ method: 'GET', url: '/api/admin/status', cookies: host })).json<AdminStatus>();
+    expect(panel.banned).toEqual([{ publicId, name: 'Alex', device: true }]);
+
+    // New address, no cookies: still the same phone.
+    expect((await me('192.168.1.40')).statusCode).toBe(403);
+    // Another phone is fine.
+    expect((await me('192.168.1.31')).statusCode).toBe(200);
+
+    await app.inject({ method: 'DELETE', url: `/api/admin/guests/${publicId}/ban`, cookies: host });
+    expect((await me('192.168.1.40')).statusCode).toBe(200);
   });
 });
 

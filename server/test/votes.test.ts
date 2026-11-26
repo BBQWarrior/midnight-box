@@ -4,10 +4,12 @@ import { openDb } from '../src/db.js';
 import { MOCK_CATALOG } from '../src/providers/mock/catalog.js';
 import { MockProvider } from '../src/providers/mock/provider.js';
 import { ProviderError, type SongRef, type SuggestionSource } from '../src/providers/types.js';
+import { BlacklistService } from '../src/services/blacklist.js';
 import { CooldownService } from '../src/services/cooldowns.js';
 import { Player } from '../src/services/player.js';
 import { QueueService } from '../src/services/queue.js';
-import { VoteService } from '../src/services/votes.js';
+import { TrackRules } from '../src/services/rules.js';
+import { type VoteOptions, VoteService } from '../src/services/votes.js';
 
 const MIN = 60_000;
 const silent = { info() {}, warn() {} };
@@ -32,6 +34,8 @@ let provider: MockProvider;
 let queue: QueueService;
 let player: Player;
 let votes: VoteService;
+let options: VoteOptions;
+let blacklist: BlacklistService;
 
 function setup(withSource = true) {
   t = 1_700_000_000_000;
@@ -40,7 +44,9 @@ function setup(withSource = true) {
   // Song 0 is playing (the mock starts with the first catalog song), so its artist is cooling down.
   provider = new MockProvider({ startPlaying: true, now });
   queue = new QueueService(db, now);
-  const cooldowns = new CooldownService(db, queue, { songMs: 120 * MIN, artistMs: 20 * MIN }, now);
+  const cooldowns = new CooldownService(db, queue, () => ({ songMs: 120 * MIN, artistMs: 20 * MIN, artistMaxSongs: 1 }), now);
+  blacklist = new BlacklistService(db, now);
+  const rules = new TrackRules({ blacklist, cooldowns, queue, noExplicit: () => false });
   player = new Player(
     { provider, queue, onChange() {}, log: silent, now },
     { pollMs: 1_000, idlePollMs: 1_000, pushAheadMs: 1_000, autoStartCooldownMs: 0 },
@@ -48,20 +54,21 @@ function setup(withSource = true) {
   source = new FakeSource();
   // Catalog songs come in threes per artist: 3 and 4 share an artist, everything else differs.
   source.refs = [1, 3, 4, 6, 9, 12, 15, 18].map(ref);
+  options = { enabled: true, roundMs: 30_000, maxWaiting: 2, candidates: 4, retryMs: 30_000 };
   votes = new VoteService(
     {
       db,
       provider,
       source: withSource ? source : null,
       queue,
-      cooldowns,
+      rules,
       player,
       log: silent,
       onChange() {},
       now,
       shuffle: (items) => items,
     },
-    { roundMs: 30_000, maxWaiting: 2, candidates: 4, retryMs: 30_000 },
+    () => options,
   );
 }
 
@@ -109,7 +116,8 @@ describe('vote rounds', () => {
     expect(votes.state().round).toBeNull();
 
     setup();
-    votes.setEnabled(false);
+    options = { ...options, enabled: false };
+    votes.settingsChanged();
     await tick();
     expect(votes.state()).toMatchObject({ active: false, round: null });
 

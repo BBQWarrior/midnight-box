@@ -11,32 +11,19 @@ import type { JoinInfo } from '@shared/types';
 import type { Config } from '../config.js';
 import type { SpotifyAuth } from '../providers/spotify/auth.js';
 import { type MusicProvider, ProviderError, ProviderNotReadyError } from '../providers/types.js';
-import type { CooldownService } from '../services/cooldowns.js';
-import type { GuestService } from '../services/guests.js';
-import type { HostAuth } from '../services/host-auth.js';
-import type { Player } from '../services/player.js';
-import type { QueueService } from '../services/queue.js';
-import type { IoServer, StateHub } from '../services/state.js';
-import type { SkipService } from '../services/skips.js';
-import type { VoteService } from '../services/votes.js';
+import type { Services } from '../services/container.js';
+import { SettingsError } from '../services/settings.js';
+import type { IoServer } from '../services/state.js';
 import { apiError, HttpError } from './errors.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerGuestRoutes } from './routes/guest.js';
 import { blockCrossSite, clientIp } from './security.js';
 
-export interface AppDeps {
+export interface AppDeps extends Services {
   config: Config;
   provider: MusicProvider;
   spotifyAuth: SpotifyAuth | null;
-  guests: GuestService;
-  queue: QueueService;
-  cooldowns: CooldownService;
-  hostAuth: HostAuth;
-  player: Player;
-  votes: VoteService;
-  skips: SkipService;
-  hub: StateHub;
   joinInfo: JoinInfo;
   cookieSecret: string;
   logger: FastifyServerOptions['logger'];
@@ -87,6 +74,9 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; i
   app.setErrorHandler((error: unknown, req, reply) => {
     if (error instanceof HttpError) {
       return reply.status(error.status).send(apiError(error.code, error.message));
+    }
+    if (error instanceof SettingsError) {
+      return reply.status(400).send(apiError('bad_request', error.message));
     }
     if (error instanceof ZodError) {
       return reply.status(400).send(apiError('bad_request', error.issues[0]?.message ?? 'Invalid request'));

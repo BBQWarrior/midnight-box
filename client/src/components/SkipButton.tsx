@@ -58,14 +58,15 @@ export function SkipButton({ skip, trackId, onForbidden }: Props) {
       aria-label={`${voted ? 'Take back skip vote' : 'Vote to skip this song'}, ${skip.votes} of ${skip.needed} votes`}
       disabled={busy}
       onClick={() => void toggle()}
-      className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-full border text-sm font-semibold transition-colors disabled:opacity-60 ${
-        voted
-          ? 'border-transparent bg-linear-to-r from-accent to-accent-2 text-white'
-          : 'border-white/20 bg-white/5 text-white/80'
+      className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${
+        voted ? 'border-accent/50 bg-accent-soft text-accent' : 'border-line bg-raised text-ink hover:border-faint/60'
       }`}
     >
       <SkipForward size={16} aria-hidden="true" />
-      Skip · {skip.votes}/{skip.needed}
+      {voted ? 'You voted to skip' : 'Vote to skip'}
+      <span className="font-normal text-muted tabular-nums">
+        {skip.votes}/{skip.needed}
+      </span>
     </button>
   );
 }

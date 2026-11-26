@@ -19,6 +19,12 @@ What Midnight Box keeps:
 - **Your network address**, in memory only and never written to disk. It's used to count one vote
   per device, to work out how many guests are around for skip votes, to stop people the host
   removed from coming back, and to rate-limit requests. It's forgotten when the server restarts.
+- **If the host removes you from the party**, your phone's Wi-Fi hardware address (as the host
+  computer sees it on the local network) is saved in a scrambled form, a keyed hash that can't be
+  turned back into the address, so a new session doesn't get you back in. Nothing like this is
+  saved for anyone else. While at least one phone is banned, the host computer checks each guest's
+  hardware address against that list; the check happens in memory and isn't stored. When the host
+  lets you back in, the saved value is deleted.
 
 Your search terms go to Spotify (through the host's account) to find songs. They are not saved
 or logged. Album covers load straight from Spotify's image servers, so Spotify sees your network
@@ -33,6 +39,9 @@ address when they do.
 - **What played.** Every song that starts on your account while Midnight Box runs is noted so songs
   and artists can rest between plays. This history is deleted after the longest cooldown
   (2 hours by default).
+- **Your house rules and blacklist.** Changes you make to the rules, and the songs, albums and
+  artists you block (their Spotify ids and names, no cover art), are saved until you change or
+  clear them. You can export the blacklist to a file and import it again.
 - **Your host password** is stored only as an argon2id hash. Host sessions are stored only as a
   SHA-256 hash and expire after 12 hours.
 
@@ -49,6 +58,7 @@ address when they do.
 - **Disconnect Spotify** in the host panel deletes the saved Spotify login and the listening history
   straight away. To also remove Midnight Box's access on Spotify's side, open
   [spotify.com/account/apps](https://www.spotify.com/account/apps/) and remove the app.
+  Your blacklist and house rules stay; clear the blacklist with **Start clean** in the host panel.
 - To delete everything else, stop Midnight Box and delete its `data` folder.
 - Guests can clear this site's cookies to end their session, or ask the host to delete their data.
 

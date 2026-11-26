@@ -117,6 +117,11 @@ export class GuestService {
     return this.bannedIps.has(ip);
   }
 
+  /** Blocks an address for a banned guest (a banned phone came back with a new session or address). */
+  banIp(ip: string, publicId: string): void {
+    if (!isLoopbackIp(ip)) this.bannedIps.set(ip, publicId);
+  }
+
   /** Returns the banned guest, or undefined if no guest has that public id. */
   ban(publicId: string): Guest | undefined {
     const guest = this.byPublicId(publicId);
@@ -144,6 +149,11 @@ export class GuestService {
       .prepare('SELECT public_id, name FROM guests WHERE banned = 1 ORDER BY created_at')
       .all() as { public_id: string; name: string | null }[];
     return rows.map((r) => ({ publicId: r.public_id, name: r.name ?? 'Guest' }));
+  }
+
+  /** A guest by public id (for the host). */
+  find(publicId: string): Guest | undefined {
+    return this.byPublicId(publicId);
   }
 
   private byPublicId(publicId: string): Guest | undefined {

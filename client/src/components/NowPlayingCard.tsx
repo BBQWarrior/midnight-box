@@ -1,19 +1,31 @@
 import type { ReactNode } from 'react';
-import { Pause, Disc3 } from 'lucide-react';
+import { Disc3, Pause } from 'lucide-react';
 import type { NowPlaying } from '@shared/types';
 import { useElapsed } from '../hooks/useElapsed';
-import { formatTime } from '../lib/format';
+import { artistNames, formatTime } from '../lib/format';
 import { Badge } from './Badge';
 import { Cover } from './Cover';
 import { OpenSpotifyLink } from './Spotify';
+import { Card } from './ui';
 
 interface Props {
   nowPlaying: NowPlaying | null;
   skewMs: number;
-  /** Optional extra row under the progress bar (guest page: skip vote). */
+  /** Optional extra row under the progress bar (guest page: skip vote; host: block). */
   action?: ReactNode;
   /** Real Spotify content (not demo mode): show the link back. */
   spotify?: boolean;
+}
+
+/** Three small bars that move while music plays. */
+export function Equalizer({ className = '' }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={`eq inline-flex h-3 items-end gap-[2px] ${className}`}>
+      <span className="h-full w-[3px] rounded-sm bg-current" />
+      <span className="h-full w-[3px] rounded-sm bg-current" />
+      <span className="h-full w-[3px] rounded-sm bg-current" />
+    </span>
+  );
 }
 
 export function NowPlayingCard({ nowPlaying, skewMs, action, spotify = false }: Props) {
@@ -22,15 +34,15 @@ export function NowPlayingCard({ nowPlaying, skewMs, action, spotify = false }: 
 
   if (!nowPlaying) {
     return (
-      <section className="flex items-center gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl">
-        <div className="flex size-20 items-center justify-center rounded-2xl bg-white/5 text-white/40">
-          <Disc3 size={32} />
+      <Card className="flex items-center gap-4 p-4">
+        <div className="flex size-20 items-center justify-center rounded-md bg-raised text-faint">
+          <Disc3 size={30} aria-hidden="true" />
         </div>
         <div>
           <h2 className="font-semibold">Nothing playing</h2>
-          <p className="text-sm text-white/60">Add a song and get the night started.</p>
+          <p className="text-sm text-muted">Add a song and get the night started.</p>
         </div>
-      </section>
+      </Card>
     );
   }
 
@@ -38,33 +50,33 @@ export function NowPlayingCard({ nowPlaying, skewMs, action, spotify = false }: 
   const pct = track.durationMs > 0 ? (clamped / track.durationMs) * 100 : 0;
 
   return (
-    <section
-      aria-label="Now playing"
-      className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl"
-    >
+    <Card label="Now playing" className="p-4">
       <div className="flex items-center gap-4">
-        <Cover track={track} className="size-24" iconSize={36} />
+        <Cover track={track} className="size-24" iconSize={34} rounded="rounded-md" />
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-glow">
-            {playing ? 'Now playing' : (
+          <p className="flex items-center gap-2 text-xs font-semibold text-accent">
+            {playing ? (
+              <>
+                <Equalizer /> Now playing
+              </>
+            ) : (
               <>
                 <Pause size={12} aria-hidden="true" /> Paused
               </>
             )}
           </p>
-          <h2 className="mt-1 break-words text-lg font-semibold">{track.name}</h2>
-          <p className="truncate text-sm text-white/70" title={track.artists.map((a) => a.name).join(', ')}>
-            {track.artists.map((a) => a.name).join(', ')}
+          <h2 className="mt-1 text-lg leading-snug font-bold break-words">{track.name}</h2>
+          <p className="truncate text-sm text-muted" title={artistNames(track.artists)}>
+            {artistNames(track.artists)}
           </p>
-          {nowPlaying.votePick && (
-            <span className="mt-2 inline-block">
-              <Badge tone="cyan">Vote pick</Badge>
-            </span>
-          )}
-          {!nowPlaying.votePick && nowPlaying.requestedBy && (
-            <span className="mt-2 inline-block max-w-full truncate rounded-full border border-accent/40 bg-accent/20 px-2.5 py-0.5 text-xs text-violet-100">
-              Requested by {nowPlaying.requestedBy.name}
-            </span>
+          {(nowPlaying.votePick || nowPlaying.requestedBy) && (
+            <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted">
+              {nowPlaying.votePick ? (
+                <Badge tone="accent">Vote pick</Badge>
+              ) : (
+                <span className="truncate">Requested by {nowPlaying.requestedBy?.name}</span>
+              )}
+            </p>
           )}
         </div>
       </div>
@@ -75,21 +87,21 @@ export function NowPlayingCard({ nowPlaying, skewMs, action, spotify = false }: 
           aria-valuemin={0}
           aria-valuemax={Math.round(track.durationMs / 1000)}
           aria-valuenow={Math.round(clamped / 1000)}
-          className="h-1.5 overflow-hidden rounded-full bg-white/10"
+          className="h-1 overflow-hidden rounded-full bg-line"
         >
-          <div className="h-full rounded-full bg-glow" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
-        <div className="mt-1.5 flex justify-between text-xs tabular-nums text-white/60">
+        <div className="mt-1.5 flex justify-between text-xs text-faint tabular-nums">
           <span>{formatTime(clamped)}</span>
           <span>{formatTime(track.durationMs)}</span>
         </div>
       </div>
       {spotify && (
-        <div className="mt-2 flex min-h-8 items-center">
+        <div className="mt-1 flex min-h-8 items-center">
           <OpenSpotifyLink track={track} className="text-xs" />
         </div>
       )}
       {action && <div className="mt-3">{action}</div>}
-    </section>
+    </Card>
   );
 }

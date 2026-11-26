@@ -26,3 +26,8 @@ export function formatMinutes(minutes: number): string {
   if (h === 0) return `${m} min`;
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
+
+/** "Artist A, Artist B". */
+export function artistNames(artists: { name: string }[]): string {
+  return artists.map((a) => a.name).join(', ');
+}

@@ -10,7 +10,11 @@ Built mobile-first, real-time, and with a security model designed for "a laptop 
   <img src="docs/screenshots/guest.png" width="200" alt="Guest view: now playing and the queue, ordered so guests take turns">
   <img src="docs/screenshots/vote.png" width="200" alt="Vote round: four songs related to the one playing, with live vote counts and a countdown">
   <img src="docs/screenshots/search.png" width="200" alt="Search: songs by the artist that's playing are resting, with the time they're free again">
-  <img src="docs/screenshots/host.png" width="200" alt="Host panel on a phone: remove songs or guests, switch vote rounds on or off">
+</p>
+<p align="center">
+  <img src="docs/screenshots/host.png" width="200" alt="Host panel, queue: a song's actions open, to remove it, block the song, its album or its artist, or remove the guest">
+  <img src="docs/screenshots/rules.png" width="200" alt="Host panel, rules: songs per guest, waiting songs, rest times and the per-artist limit, changed while the party runs">
+  <img src="docs/screenshots/blacklist.png" width="200" alt="Host panel, blacklist: search to block, the blocked song, album and artist, and export, import or start clean">
 </p>
 <p align="center">
   <img src="docs/screenshots/tv.png" width="820" alt="TV screen: now playing with skip votes, a live vote round with vote bars and countdown, the QR code to join and the next five songs with who requested them">
@@ -29,15 +33,22 @@ Built mobile-first, real-time, and with a security model designed for "a laptop 
 - **Big-screen display**: open `/tv` on a TV or projector to show what's playing, what's next, the
   live vote and the QR code to join, readable from across the room.
 - **Fair queue**: guests take turns, so a newcomer's first song plays before someone else's third.
-- **House rules**: separate cooldowns for songs (2 h) and artists (20 min), one song per artist in
-  the queue, and per-guest limits (3 waiting, 2 per 20 minutes). Search results show what's
-  resting and when it's free again. Everything is configurable.
+- **House rules you can change mid-party**: song rest time (2 h), an artist limit (one song per
+  20 min, or say three per 30 min), one song per artist in the queue, per-guest limits (3 waiting,
+  2 per 20 minutes) and an optional "no explicit songs" switch. Search results show what's resting
+  and when it's free again. `.env` sets the defaults; the host changes them in the host panel, and
+  the changes are kept until the host resets them.
+- **Blacklist**: block a song (every version of it), an album or an artist from the host panel.
+  Guests see blocked songs greyed out, they never come up in votes, and if Spotify's autoplay
+  starts one anyway it's skipped. Export the list to a file, import it at the next party, or
+  start clean. Every block can be undone.
 - **Live everywhere**: now playing, progress and the queue update instantly on every phone over WebSockets.
 - **Gapless hand-off to Spotify**: Midnight Box keeps its own queue and hands Spotify the next
   song just before the current one ends (see [How it works](#how-it-works)).
 - **Host panel, from any device**: password login, connect or disconnect Spotify, choose the speaker, pause,
-  skip, remove songs, clear cooldowns, switch vote rounds and vote-to-skip on or off, remove
-  troublemakers from the party.
+  skip, remove or block songs, clear cooldowns, change the rules, and remove troublemakers from the
+  party: their phone is banned by its Wi-Fi hardware address, so a private tab doesn't get them back
+  in. Removing a guest, blocking and resetting the rules can all be undone.
 - **Demo mode**: a fake music catalog and a simulated player, so you can try everything without Spotify.
 
 ### Roadmap
@@ -47,6 +58,10 @@ Built mobile-first, real-time, and with a security model designed for "a laptop 
 - [x] Password-protected host login, so the host can use a phone too
 - [x] Vote rounds: guests vote on suggested songs related to what's playing
 - [x] Big-screen display page and vote-to-skip
+- [x] House rules the host can change while the party runs
+- [x] Blacklist for songs, albums and artists, with export and import
+- [x] Device bans that survive cleared cookies and restarts
+- [x] Calmer design: graphite and amber, no gradients or glass
 
 ## Try it in one minute
 
@@ -122,6 +137,20 @@ so the album version, the single and the 2011 remaster count as the same song. T
 only looks at the main artist, so a feature doesn't block anyone
 ([`server/src/services/cooldowns.ts`](server/src/services/cooldowns.ts)).
 
+**House rules while the party runs.** `.env` gives the defaults. The host's changes are saved in the
+database, only where they differ from the defaults, and every part of the server reads the current
+value each time, so a change applies at once and guests see the new rules straight away
+([`server/src/services/settings.ts`](server/src/services/settings.ts)). The artist rule is "at most
+N songs per artist in M minutes": with N = 1 an artist rests for M minutes after each song, which is
+the default.
+
+**Blacklist.** One rules check ([`server/src/services/rules.ts`](server/src/services/rules.ts)) decides
+whether a song can be requested: the host's blacklist and explicit switch first, then duplicates and
+cooldowns. Search, adding songs and vote rounds all ask it. A blocked song is shown greyed out with a
+reason rather than hidden, so search doesn't look broken. Blocking takes waiting copies out of the
+queue; a song already handed to Spotify, or one autoplay starts, is skipped as it starts (the host can
+turn that off).
+
 **Vote rounds.** Spotify no longer gives new apps recommendations or related artists, so suggestions
 come from Last.fm's listening data: songs similar to the one playing, topped up with the best-known
 songs of similar artists. Each suggestion is matched to Spotify by exact title and artist, and anything
@@ -163,8 +192,13 @@ The design assumes guests are untrusted:
   Over plain-HTTP Wi-Fi the login page warns the host not to reuse a password.
 - **Signed, httpOnly guest cookies.** Guests get an anonymous session id they can't read or forge. Other
   guests only ever see a separate public id.
-- **Bans that stick.** Removing a guest blocks their session and, until the server restarts, the
-  address they used, so clearing cookies isn't enough to come back. The host computer can't be banned.
+- **Bans that stick.** Removing a guest blocks their session, the address they used and, when the host
+  computer can see it on the local network, their phone's Wi-Fi hardware address (from the operating
+  system's ARP table). Phones use a private hardware address per Wi-Fi network but keep it on that
+  network, so cookies, private tabs, a new IP address or a server restart don't get them back in.
+  Only a keyed hash of a banned phone's address is stored, and addresses are only looked up while
+  someone is banned. Off the LAN (VPN, reverse proxy, guest Wi-Fi that isolates devices) it falls
+  back to session and address bans. The host computer can't be banned.
 - **One vote per device.** Votes, skip votes included, are counted per network address, so a private
   tab or cleared cookies don't add votes. A removed guest's votes are dropped.
 - **A read-only big screen.** The TV page uses only the public live state and join address. It never
@@ -179,8 +213,9 @@ The design assumes guests are untrusted:
 - **Minimal attack surface.** Only the built `client/dist` folder is served. Logs never include
   query strings (search terms, OAuth codes).
 - **Keeps only what it needs.** Play history is deleted once no cooldown or limit needs it (2 hours by
-  default), guests' network addresses and votes never leave memory, and **Disconnect Spotify** in the
-  host panel deletes the saved login and listening history immediately. Details are in the
+  default), guests' network addresses and votes never leave memory, the blacklist holds ids and names
+  only, and **Disconnect Spotify** in the host panel deletes the saved login and listening history
+  immediately. Details are in the
   [privacy policy](PRIVACY.md), which guests and the host can also read in the app at `/privacy`.
 
 These rules are covered by tests in [`server/test/app.test.ts`](server/test/app.test.ts).
@@ -190,7 +225,7 @@ These rules are covered by tests in [`server/test/app.test.ts`](server/test/app.
 | Layer   | Choice |
 | ------- | ------ |
 | Server  | Node.js 26, TypeScript, Fastify 5, Socket.IO, Zod, built-in `node:sqlite`, Last.fm API |
-| Client  | React 19, Vite 8, Tailwind CSS 4, lucide icons |
+| Client  | React 19, Vite 8, Tailwind CSS 4, lucide icons, Figtree (self-hosted) |
 | Tooling | TypeScript 7, Vitest, esbuild, GitHub Actions, Dependabot |
 
 ## Project structure
@@ -199,12 +234,13 @@ These rules are covered by tests in [`server/test/app.test.ts`](server/test/app.
 shared/types.ts          API contract shared by server and client (types only)
 server/src/
   providers/             MusicProvider interface + Spotify and mock implementations, Last.fm suggestions
-  services/              queue, player control loop, vote rounds, vote to skip, cooldowns, guests,
-                         host login, live state
+  services/              queue, player control loop, vote rounds, vote to skip, cooldowns, house
+                         rules (settings), blacklist, the rules check, device bans, guests,
+                         host login, live state; container.ts wires them together
   http/                  Fastify app, routes, security helpers
 client/src/
-  pages/                 guest, host and TV views
-  components/, hooks/    UI building blocks, live state + clock-skew handling
+  pages/                 guest and TV views; admin/ holds the host panel, one file per section
+  components/, hooks/    UI building blocks (components/ui.tsx), live state + clock-skew handling
 ```
 
 ## Scripts

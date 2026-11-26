@@ -86,6 +86,25 @@ const MIGRATIONS: (string | ((db: Db) => void))[] = [
 
   // v3: vote rounds. Winners join the queue without a guest.
   `ALTER TABLE queue ADD COLUMN source TEXT NOT NULL DEFAULT 'guest' CHECK (source IN ('guest', 'vote'));`,
+
+  // v4: the host's blacklist, and phones banned by their (hashed) hardware address.
+  `
+  CREATE TABLE blacklist (
+    kind     TEXT NOT NULL CHECK (kind IN ('song', 'album', 'artist')),
+    key      TEXT NOT NULL,
+    name     TEXT NOT NULL,
+    artist   TEXT,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, key)
+  ) STRICT;
+
+  CREATE TABLE banned_devices (
+    device_hash TEXT PRIMARY KEY,
+    public_id   TEXT NOT NULL,
+    banned_at   INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX banned_devices_by_guest ON banned_devices(public_id);
+  `,
 ];
 
 export function openDb(file: string): Db {

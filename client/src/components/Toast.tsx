@@ -1,16 +1,25 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastItem {
   id: number;
   message: string;
   tone: 'info' | 'error';
+  action: ToastAction | undefined;
 }
 
 interface ToastApi {
-  show: (message: string, tone?: ToastItem['tone']) => void;
+  /** Shows a short message. With an action (e.g. Undo), it stays up longer. */
+  show: (message: string, tone?: ToastItem['tone'], action?: ToastAction) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
+const SHOW_MS = 3500;
+const SHOW_WITH_ACTION_MS = 7000;
 
 export function useToast(): ToastApi {
   const ctx = useContext(ToastContext);
@@ -22,15 +31,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
 
-  const show = useCallback((message: string, tone: ToastItem['tone'] = 'info') => {
-    const id = nextId.current++;
-    // The same message again (e.g. two searches failing the same way) replaces the first one.
-    setItems((prev) => [
-      ...prev.filter((t) => t.message !== message || t.tone !== tone).slice(-2),
-      { id, message, tone },
-    ]);
-    window.setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 3500);
-  }, []);
+  const dismiss = useCallback((id: number) => setItems((prev) => prev.filter((t) => t.id !== id)), []);
+
+  const show = useCallback(
+    (message: string, tone: ToastItem['tone'] = 'info', action?: ToastAction) => {
+      const id = nextId.current++;
+      // The same message again (e.g. two searches failing the same way) replaces the first one.
+      setItems((prev) => [
+        ...prev.filter((t) => t.message !== message || t.tone !== tone).slice(-2),
+        { id, message, tone, action },
+      ]);
+      window.setTimeout(() => dismiss(id), action ? SHOW_WITH_ACTION_MS : SHOW_MS);
+    },
+    [dismiss],
+  );
 
   const api = useMemo(() => ({ show }), [show]);
 
@@ -46,13 +60,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             role="status"
-            className={`toast-in pointer-events-auto max-w-sm rounded-2xl border px-4 py-3 text-sm shadow-lg backdrop-blur-xl ${
-              t.tone === 'error'
-                ? 'border-rose-400/30 bg-rose-950/80 text-rose-100'
-                : 'border-white/15 bg-midnight-900/90 text-white'
-            }`}
+            className={`toast-in pointer-events-auto flex max-w-md items-center gap-3 rounded-lg border py-2.5 pl-4 text-sm shadow-lg shadow-black/40 ${
+              t.action ? 'pr-2' : 'pr-4'
+            } ${t.tone === 'error' ? 'border-danger/40 bg-[#2a1716] text-[#ffd9d6]' : 'border-line bg-raised text-ink'}`}
           >
-            {t.message}
+            <span>{t.message}</span>
+            {t.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  dismiss(t.id);
+                  t.action?.onClick();
+                }}
+                className="min-h-9 shrink-0 rounded-md px-3 font-semibold text-accent hover:bg-accent-soft"
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

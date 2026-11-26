@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { errorMessage } from '../lib/api';
+import { Button, Wordmark } from './ui';
 
 interface Props {
   initialName?: string;
@@ -27,14 +28,15 @@ export function NameCard({ initialName = '', onSubmit, onCancel }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-midnight-950/90 p-5 backdrop-blur-md">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg/95 p-5">
       <form
         onSubmit={(e) => void submit(e)}
-        className="w-full max-w-sm rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl"
+        className="w-full max-w-sm rounded-xl border border-line bg-surface p-6 shadow-2xl shadow-black/50"
       >
-        <h1 className="text-2xl font-bold">What should we call you?</h1>
-        <p className="mt-1 text-sm text-white/60">Your name shows next to the songs you add.</p>
-        <p className="mt-1 text-xs text-white/50">
+        <Wordmark />
+        <h1 className="mt-6 text-2xl font-bold tracking-tight">What should we call you?</h1>
+        <p className="mt-1 text-sm text-muted">Your name shows next to the songs you add.</p>
+        <p className="mt-1 text-xs text-faint">
           Your nickname is stored on the host&apos;s computer.{' '}
           <a href="/privacy" className="underline underline-offset-2">
             Privacy
@@ -51,30 +53,22 @@ export function NameCard({ initialName = '', onSubmit, onCancel }: Props) {
           autoFocus
           autoComplete="nickname"
           placeholder="Your name"
-          className="mt-5 h-12 w-full rounded-xl border border-white/15 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
+          className="mt-5 h-12 w-full rounded-lg border border-line bg-bg px-4 text-base text-ink placeholder:text-faint focus:border-faint"
         />
         {error && (
-          <p role="alert" className="mt-2 text-sm text-rose-300">
+          <p role="alert" className="mt-2 text-sm text-danger">
             {error}
           </p>
         )}
         <div className="mt-4 flex gap-3">
           {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="min-h-12 flex-1 rounded-xl border border-white/15 font-medium"
-            >
+            <Button className="min-h-12 flex-1" onClick={onCancel}>
               Cancel
-            </button>
+            </Button>
           )}
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="min-h-12 flex-1 rounded-xl bg-linear-to-r from-accent to-accent-2 font-semibold text-white disabled:opacity-50"
-          >
+          <Button type="submit" variant="primary" className="min-h-12 flex-1" disabled={busy || !name.trim()}>
             {busy ? 'Saving…' : 'Continue'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

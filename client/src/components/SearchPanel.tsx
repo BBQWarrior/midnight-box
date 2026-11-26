@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Loader2, Search } from 'lucide-react';
-import type { PublicState, Quota, RejectReason, SearchResult, Track, TrackBlock } from '@shared/types';
+import type { PublicState, Quota, SearchResult, Track } from '@shared/types';
 import { ApiRequestError, api, errorMessage, isAbort } from '../lib/api';
-import { formatClock, formatTime } from '../lib/format';
+import { artistNames, formatClock, formatTime } from '../lib/format';
 import { computeAllowance } from '../lib/quota';
+import { blockText, rejectText } from '../lib/reasons';
 import { useNow } from '../hooks/useNow';
 import { Badge } from './Badge';
 import { CoverLink, SpotifyLogo } from './Spotify';
 import { useToast } from './Toast';
+import { Button, Card } from './ui';
 
 interface Props {
   state: PublicState;
@@ -17,43 +19,6 @@ interface Props {
   onQuota: (quota: Quota) => void;
   onForbidden: () => void;
   onAdded: () => void;
-}
-
-function at(availableAt: number | null): string {
-  return availableAt === null ? '' : ` at ${formatClock(availableAt)}`;
-}
-
-function rejectText(reason: RejectReason, availableAt: number | null): string {
-  switch (reason) {
-    case 'already_queued':
-      return 'already in the queue';
-    case 'artist_queued':
-      return 'this artist is already queued';
-    case 'song_cooldown':
-      return `played recently, free again${at(availableAt)}`;
-    case 'artist_cooldown':
-      return `artist played recently, free again${at(availableAt)}`;
-    case 'too_soon':
-      return availableAt === null ? "you've added enough for now" : `you can add again at ${formatClock(availableAt)}`;
-    case 'limit_reached':
-      return "you've hit your song limit";
-    case 'not_found':
-      return "couldn't find that song";
-  }
-}
-
-function blockText(block: TrackBlock): string {
-  const when = block.availableAt === null ? '' : ` · free again at ${formatClock(block.availableAt)}`;
-  switch (block.reason) {
-    case 'already_queued':
-      return 'Already in the queue';
-    case 'artist_queued':
-      return 'This artist is already queued';
-    case 'song_cooldown':
-      return `Played recently${when}`;
-    case 'artist_cooldown':
-      return `Artist played recently${when}`;
-  }
 }
 
 export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, onForbidden, onAdded }: Props) {
@@ -153,12 +118,12 @@ export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, on
 
   return (
     <div>
-      <div className="sticky top-0 z-10 -mx-4 bg-midnight-950/80 px-4 pb-3 pt-1 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 -mx-4 bg-bg px-4 pt-1 pb-3">
         <label htmlFor="song-search" className="sr-only">
           Search songs
         </label>
         <div className="relative">
-          <Search size={18} aria-hidden="true" className="absolute left-4 top-1/2 -translate-y-1/2 text-white/50" />
+          <Search size={18} aria-hidden="true" className="absolute top-1/2 left-3.5 -translate-y-1/2 text-faint" />
           <input
             id="song-search"
             type="search"
@@ -167,10 +132,10 @@ export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, on
             disabled={!providerReady}
             maxLength={100}
             placeholder={providerReady ? 'Search songs or artists' : 'Search unavailable'}
-            className="h-12 w-full rounded-full border border-white/15 bg-white/5 pl-11 pr-4 text-base text-white placeholder:text-white/40 disabled:opacity-50"
+            className="h-12 w-full rounded-lg border border-line bg-surface pr-4 pl-11 text-base text-ink placeholder:text-faint focus:border-faint disabled:opacity-50"
           />
         </div>
-        <p className="mt-2 px-1 text-xs text-white/60">{hint}</p>
+        <p className="mt-2 px-1 text-[13px] text-muted">{hint}</p>
         {!state.demoMode && providerReady && (
           <div className="-mb-3 -ml-3">
             <SpotifyLogo />
@@ -179,97 +144,92 @@ export function SearchPanel({ state, myPublicId, recentAdds, skewMs, onQuota, on
       </div>
 
       {loading && results.length === 0 && (
-        <p className="flex items-center justify-center gap-2 py-8 text-sm text-white/60" role="status">
+        <p className="flex items-center justify-center gap-2 py-8 text-sm text-muted" role="status">
           <Loader2 size={16} className="animate-spin" aria-hidden="true" /> Searching…
         </p>
       )}
       {searched && !loading && results.length === 0 && (
-        <p className="py-8 text-center text-sm text-white/60">No songs found for that search.</p>
+        <p className="py-8 text-center text-sm text-muted">No songs found for that search.</p>
       )}
       {!query.trim() && providerReady && (
-        <p className="py-8 text-center text-sm text-white/50">Type a song or artist to start.</p>
+        <p className="py-8 text-center text-sm text-faint">Type a song or artist to start.</p>
       )}
 
-      <ul className="flex flex-col gap-2 pb-28">
-        {results.map(({ track, block }) => {
-          const isPlaying = track.id === playingId;
-          const disabled = isPlaying || block !== null;
-          const isSel = selected.has(track.id);
-          const blocked = !disabled && !isSel && selected.size >= maxSelectable;
-          return (
-            <li
-              key={track.id}
-              className={`flex items-center rounded-2xl border pl-2.5 backdrop-blur-xl transition-colors ${
-                isSel ? 'border-accent bg-accent/15' : 'border-white/10 bg-white/5'
-              }`}
-            >
-              <CoverLink track={track} spotify={!state.demoMode} />
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={isSel}
-                disabled={disabled || blocked}
-                onClick={() => toggle(track)}
-                className={`flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-r-2xl py-2.5 pl-3 pr-2.5 text-left ${
-                  disabled || blocked ? 'opacity-50' : 'active:bg-white/10'
-                }`}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-medium" title={track.name}>{track.name}</span>
-                    {track.explicit && <Badge tone="explicit" label="Explicit">E</Badge>}
-                  </span>
-                  <span className="block truncate text-xs text-white/60" title={track.artists.map((a) => a.name).join(', ')}>
-                    {track.artists.map((a) => a.name).join(', ')}
-                  </span>
-                  {block && <span className="block text-xs text-amber-200/80">{blockText(block)}</span>}
-                </span>
-                <span className="flex shrink-0 flex-col items-end gap-1">
-                  {isPlaying ? (
-                    <Badge tone="cyan">Playing</Badge>
-                  ) : block ? null : (
-                    <span
-                      aria-hidden="true"
-                      className={`flex size-6 items-center justify-center rounded-full border ${
-                        isSel ? 'border-accent bg-accent text-white' : 'border-white/30'
+      <div className="pb-28">
+        {results.length > 0 && (
+          <Card>
+            <ul className="divide-y divide-line">
+              {results.map(({ track, block }) => {
+                const isPlaying = track.id === playingId;
+                const disabled = isPlaying || block !== null;
+                const isSel = selected.has(track.id);
+                const blocked = !disabled && !isSel && selected.size >= maxSelectable;
+                return (
+                  <li key={track.id} className={`flex items-center pl-3 transition-colors ${isSel ? 'bg-accent-soft' : ''}`}>
+                    <CoverLink track={track} spotify={!state.demoMode} />
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={isSel}
+                      disabled={disabled || blocked}
+                      onClick={() => toggle(track)}
+                      className={`flex min-h-16 min-w-0 flex-1 items-center gap-3 py-2.5 pr-3 pl-3 text-left ${
+                        disabled || blocked ? 'opacity-50' : 'active:bg-raised'
                       }`}
                     >
-                      {isSel && <Check size={14} />}
-                    </span>
-                  )}
-                  <span className="text-xs tabular-nums text-white/50">{formatTime(track.durationMs)}</span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-        {nextOffset !== null && (
-          <li>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => void runSearch(query.trim(), nextOffset)}
-              className="min-h-11 w-full rounded-full border border-white/15 text-sm font-medium disabled:opacity-50"
-            >
-              {loading ? 'Loading…' : 'Load more'}
-            </button>
-          </li>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold" title={track.name}>
+                            {track.name}
+                          </span>
+                          {track.explicit && (
+                            <Badge tone="explicit" label="Explicit">
+                              E
+                            </Badge>
+                          )}
+                        </span>
+                        <span className="block truncate text-[13px] text-muted" title={artistNames(track.artists)}>
+                          {artistNames(track.artists)}
+                        </span>
+                        {block && <span className="block text-xs text-faint">{blockText(block)}</span>}
+                      </span>
+                      <span className="flex shrink-0 flex-col items-end gap-1">
+                        {isPlaying ? (
+                          <Badge tone="accent">Playing</Badge>
+                        ) : block ? null : (
+                          <span
+                            aria-hidden="true"
+                            className={`flex size-6 items-center justify-center rounded-full border ${
+                              isSel ? 'border-accent bg-accent text-accent-ink' : 'border-faint'
+                            }`}
+                          >
+                            {isSel && <Check size={14} strokeWidth={3} />}
+                          </span>
+                        )}
+                        <span className="text-xs text-faint tabular-nums">{formatTime(track.durationMs)}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
         )}
-      </ul>
+        {nextOffset !== null && (
+          <Button className="mt-3 w-full" disabled={loading} onClick={() => void runSearch(query.trim(), nextOffset)}>
+            {loading ? 'Loading…' : 'Load more'}
+          </Button>
+        )}
+      </div>
 
       {selected.size > 0 && (
         <div
-          className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-white/10 bg-midnight-950/90 px-4 pt-3 backdrop-blur-xl"
+          className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-line bg-bg px-4 pt-3"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)' }}
         >
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => void submit()}
-            className="min-h-12 w-full rounded-full bg-linear-to-r from-accent to-accent-2 font-semibold text-white shadow-lg disabled:opacity-60"
-          >
+          <Button variant="primary" className="min-h-12 w-full text-base" disabled={submitting} onClick={() => void submit()}>
             {submitting ? 'Adding…' : `Add ${selected.size} song${selected.size === 1 ? '' : 's'}`}
-          </button>
+          </Button>
         </div>
       )}
     </div>

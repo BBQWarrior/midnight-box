@@ -9,7 +9,9 @@ import { useOnNew } from '../hooks/useOnNew';
 import { useSecondsLeft } from '../hooks/useSecondsLeft';
 import { Badge } from '../components/Badge';
 import { Cover } from '../components/Cover';
+import { Equalizer } from '../components/NowPlayingCard';
 import { CoverLink, OpenSpotifyLink, SpotifyLogo } from '../components/Spotify';
+import { Wordmark } from '../components/ui';
 
 const UP_NEXT = 5;
 const ANNOUNCE_MS = 6000;
@@ -84,9 +86,9 @@ function QueueRow({ entry, spotify }: { entry: QueueEntry; spotify: boolean }) {
       <CoverLink track={entry.track} spotify={spotify} className="size-[4.2vh] min-w-[4.2vh]" iconSize={16} rounded="rounded-lg" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[2vh] font-medium leading-tight" title={entry.track.name}>{entry.track.name}</p>
-        <p className="truncate text-[1.6vh] leading-tight text-white/60" title={artistsOf(entry.track.artists)}>{artistsOf(entry.track.artists)}</p>
+        <p className="truncate text-[1.6vh] leading-tight text-muted" title={artistsOf(entry.track.artists)}>{artistsOf(entry.track.artists)}</p>
       </div>
-      <span className="max-w-[35%] shrink-0 truncate text-[1.6vh] text-violet-200">
+      <span className="max-w-[35%] shrink-0 truncate text-[1.6vh] text-faint">
         {entry.votePick ? 'Vote pick' : (entry.requestedBy?.name ?? '')}
       </span>
     </li>
@@ -97,10 +99,10 @@ function VotePanel({ round, skewMs, spotify }: { round: VoteRound; skewMs: numbe
   const secondsLeft = useSecondsLeft(round.endsAt, skewMs);
   const total = round.candidates.reduce((sum, c) => sum + c.votes, 0);
   return (
-    <section aria-label="Vote for the next song" className="rounded-[2vh] border border-white/10 bg-white/5 p-[2vh]">
+    <section aria-label="Vote for the next song" className="rounded-[1.6vh] border border-line bg-surface p-[2vh]">
       <div className="flex items-baseline justify-between gap-4">
         <h2 className="text-[3vh] font-semibold">Vote for the next song</h2>
-        <span role="timer" aria-label={`${secondsLeft} seconds left`} className="text-[3vh] font-bold tabular-nums text-glow">
+        <span role="timer" aria-label={`${secondsLeft} seconds left`} className="text-[3vh] font-bold tabular-nums text-accent">
           {secondsLeft}s
         </span>
       </div>
@@ -108,16 +110,16 @@ function VotePanel({ round, skewMs, spotify }: { round: VoteRound; skewMs: numbe
         {round.candidates.map((c) => {
           const pct = total > 0 ? (c.votes / total) * 100 : 0;
           return (
-            <li key={c.track.id} className="relative overflow-hidden rounded-[1.2vh] bg-white/5">
+            <li key={c.track.id} className="relative overflow-hidden rounded-[1vh] bg-raised">
               <div
-                className="absolute inset-y-0 left-0 bg-linear-to-r from-accent/70 to-accent-2/50 transition-[width] duration-500"
+                className="absolute inset-y-0 left-0 bg-accent/25 transition-[width] duration-500"
                 style={{ width: `${pct}%` }}
               />
               <div className="relative flex items-center gap-[1.2vw] p-[1vh]">
                 <CoverLink track={c.track} spotify={spotify} className="size-[6vh] min-w-[6vh]" iconSize={22} rounded="rounded-lg" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[2.4vh] font-medium leading-tight" title={c.track.name}>{c.track.name}</p>
-                  <p className="truncate text-[1.8vh] leading-tight text-white/70" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
+                  <p className="truncate text-[1.8vh] leading-tight text-muted" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
                 </div>
                 <span className="shrink-0 text-[2.6vh] font-bold tabular-nums">{c.votes}</span>
               </div>
@@ -192,13 +194,13 @@ export function TvPage() {
   return (
     <div className={`relative flex h-dvh w-screen flex-col overflow-hidden p-[3vh] ${idle ? 'cursor-none' : ''}`}>
       <header className="flex shrink-0 items-center justify-between">
-        <h1 className="bg-linear-to-r from-violet-300 to-cyan-200 bg-clip-text text-[4vh] font-bold text-transparent">
-          Midnight Box
+        <h1>
+          <Wordmark size="tv" />
         </h1>
         <div className="flex items-center gap-[1.5vh]">
           {spotify && <SpotifyLogo tv />}
           {!connected && (
-            <span role="status" className="flex items-center gap-[0.8vh] text-[1.8vh] text-amber-200/80">
+            <span role="status" className="flex items-center gap-[0.8vh] text-[1.8vh] text-muted">
               <WifiOff size={16} aria-hidden="true" /> Reconnecting…
             </span>
           )}
@@ -206,7 +208,7 @@ export function TvPage() {
             type="button"
             onClick={toggle}
             aria-label={fullscreen ? 'Exit full screen' : 'Enter full screen'}
-            className={`flex size-[6vh] items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/80 transition-opacity ${
+            className={`flex size-[6vh] items-center justify-center rounded-[1vh] border border-line bg-surface text-muted transition-opacity ${
               idle ? 'pointer-events-none opacity-0' : 'opacity-100'
             }`}
           >
@@ -219,11 +221,11 @@ export function TvPage() {
         <main className="flex min-w-0 flex-1 flex-col gap-[2.5vh]">
           <section aria-label="Now playing" className="flex min-h-0 flex-1 items-center gap-[3vw]">
             {state && !state.providerReady ? (
-              <p role="status" className="text-[4vh] font-semibold text-amber-100">
+              <p role="status" className="text-[4vh] font-semibold text-muted">
                 Waiting for the host to connect Spotify
               </p>
             ) : !state ? null : !nowPlaying || !track ? (
-              <div className="flex items-center gap-[3vh] text-white/70">
+              <div className="flex items-center gap-[3vh] text-muted">
                 <Music aria-hidden="true" className="size-[12vh] shrink-0" />
                 <p className="text-[4vh] font-semibold">Nothing playing yet. Scan the code to add a song!</p>
               </div>
@@ -237,25 +239,26 @@ export function TvPage() {
                   iconSize={96}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[2.2vh] font-medium uppercase tracking-widest text-glow">
+                  <p className="flex items-center gap-[1vh] text-[2.2vh] font-semibold text-accent">
+                    {nowPlaying.isPlaying && <Equalizer className="h-[2vh]" />}
                     {nowPlaying.isPlaying ? 'Now playing' : 'Paused'}
                   </p>
-                  <h2 className="mt-[1vh] line-clamp-2 text-[6.5vh] font-bold leading-tight" title={track.name}>{track.name}</h2>
-                  <p className="mt-[1vh] truncate text-[3.6vh] text-white/70" title={artistsOf(track.artists)}>{artistsOf(track.artists)}</p>
+                  <h2 className="mt-[1vh] line-clamp-2 text-[6.5vh] leading-tight font-bold tracking-tight" title={track.name}>{track.name}</h2>
+                  <p className="mt-[1vh] truncate text-[3.6vh] text-muted" title={artistsOf(track.artists)}>{artistsOf(track.artists)}</p>
                   <div className="mt-[2vh] flex flex-wrap items-center gap-[1.5vh]">
                     {nowPlaying.votePick && (
                       <span className="text-[2vh]">
-                        <Badge tone="cyan">Vote pick</Badge>
+                        <Badge tone="accent">Vote pick</Badge>
                       </span>
                     )}
                     {!nowPlaying.votePick && nowPlaying.requestedBy && (
-                      <span className="max-w-full truncate rounded-full border border-accent/40 bg-accent/20 px-[1.5vh] py-[0.6vh] text-[2.2vh] text-violet-100">
+                      <span className="max-w-full truncate text-[2.2vh] text-muted">
                         Requested by {nowPlaying.requestedBy.name}
                       </span>
                     )}
                     {spotify && <OpenSpotifyLink track={track} className="text-[2.2vh]" />}
                     {skip && skip.enabled && skip.votes > 0 && skip.trackId === track.id && (
-                      <span className="rounded-full border border-rose-300/30 bg-rose-400/10 px-[1.5vh] py-[0.6vh] text-[2.2vh] tabular-nums text-rose-100">
+                      <span className="rounded-[0.8vh] border border-line px-[1.2vh] py-[0.5vh] text-[2.2vh] tabular-nums text-muted">
                         Skip votes {skip.votes}/{skip.needed}
                       </span>
                     )}
@@ -267,11 +270,11 @@ export function TvPage() {
                       aria-valuemin={0}
                       aria-valuemax={Math.round(track.durationMs / 1000)}
                       aria-valuenow={Math.round(elapsed / 1000)}
-                      className="h-[1.2vh] overflow-hidden rounded-full bg-white/10"
+                      className="h-[0.8vh] overflow-hidden rounded-full bg-line"
                     >
-                      <div className="h-full rounded-full bg-glow" style={{ width: `${pct}%` }} />
+                      <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
                     </div>
-                    <div className="mt-[1vh] flex justify-between text-[2vh] tabular-nums text-white/60">
+                    <div className="mt-[1vh] flex justify-between text-[2vh] tabular-nums text-faint">
                       <span>{formatTime(elapsed)}</span>
                       <span>{formatTime(track.durationMs)}</span>
                     </div>
@@ -284,24 +287,24 @@ export function TvPage() {
         </main>
 
         <aside className="flex w-[26vw] shrink-0 flex-col gap-[2.5vh]">
-          <section className="flex flex-col items-center rounded-[2vh] border border-white/10 bg-white/5 p-[2vh] text-center">
+          <section className="flex flex-col items-center rounded-[1.6vh] border border-line bg-surface p-[2vh] text-center">
             <h2 className="text-[3vh] font-semibold">Scan to join</h2>
             {join ? (
               <img
                 src={join.qrDataUrl}
                 alt="QR code to join Midnight Box"
-                className="mt-[1.5vh] size-[26vh] rounded-[1.5vh] bg-white p-[1vh]"
+                className="mt-[1.5vh] size-[26vh] rounded-[1vh] bg-white p-[1vh]"
               />
             ) : (
-              <div className="mt-[1.5vh] size-[26vh] rounded-[1.5vh] bg-white/10" />
+              <div className="mt-[1.5vh] size-[26vh] rounded-[1vh] bg-raised" />
             )}
-            {join && <p className="mt-[1.2vh] break-all text-[1.8vh] text-white/70">{join.joinUrl}</p>}
+            {join && <p className="mt-[1.2vh] break-all text-[1.8vh] text-muted">{join.joinUrl}</p>}
           </section>
 
-          <section aria-label="Up next" className="min-h-0 flex-1 overflow-hidden rounded-[2vh] border border-white/10 bg-white/5 p-[2vh]">
-            <h2 className="mb-[1.5vh] text-[2.4vh] font-semibold uppercase tracking-wider text-white/60">Up next</h2>
+          <section aria-label="Up next" className="min-h-0 flex-1 overflow-hidden rounded-[1.6vh] border border-line bg-surface p-[2vh]">
+            <h2 className="mb-[1.5vh] text-[2.6vh] font-semibold">Up next</h2>
             {queue.length === 0 ? (
-              <p className="text-[2.2vh] text-white/60">The queue is empty. Scan the code to add a song!</p>
+              <p className="text-[2.2vh] text-muted">The queue is empty. Scan the code to add a song!</p>
             ) : (
               <>
                 <ul className="flex flex-col gap-[1.4vh]">
@@ -310,7 +313,7 @@ export function TvPage() {
                   ))}
                 </ul>
                 {queue.length > UP_NEXT && (
-                  <p className="mt-[1.4vh] text-[1.8vh] text-white/50">+{queue.length - UP_NEXT} more</p>
+                  <p className="mt-[1.4vh] text-[1.8vh] text-faint">+{queue.length - UP_NEXT} more</p>
                 )}
               </>
             )}
@@ -321,7 +324,7 @@ export function TvPage() {
       {banner && (
         <div
           role="status"
-          className="toast-in absolute inset-x-[6vw] top-1/2 z-10 -translate-y-1/2 rounded-[3vh] border border-glow/40 bg-midnight-900/95 px-[4vw] py-[5vh] text-center text-[5vh] font-bold shadow-2xl"
+          className="toast-in absolute inset-x-[6vw] top-1/2 z-10 -translate-y-1/2 rounded-[2vh] border border-accent/50 bg-raised px-[4vw] py-[5vh] text-center text-[5vh] font-bold shadow-2xl shadow-black/60"
         >
           {banner}
         </div>

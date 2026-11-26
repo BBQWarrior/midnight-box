@@ -17,7 +17,8 @@ interface StateDeps {
   player: Player;
   votes: VoteService;
   skips: SkipService;
-  limits: Limits;
+  /** The house rules guests see, read on every snapshot. */
+  limits: () => Limits;
   demo: boolean;
   now?: () => number;
 }
@@ -63,7 +64,7 @@ export class StateHub {
       demoMode: demo,
       nowPlaying,
       queue: queue.upcoming().map(QueueService.toEntry),
-      limits,
+      limits: limits(),
       vote: votes.state(),
       skip: skips.state(),
       serverTime: this.now(),

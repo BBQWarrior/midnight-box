@@ -18,7 +18,7 @@ export function Cover({ track, className = 'size-12', iconSize = 20, rounded = '
         src={track.imageUrl}
         alt=""
         loading="lazy"
-        className={`${className} shrink-0 ${rounded} bg-white/5 object-cover`}
+        className={`${className} shrink-0 ${rounded} bg-raised object-cover`}
       />
     );
   }
@@ -28,8 +28,8 @@ export function Cover({ track, className = 'size-12', iconSize = 20, rounded = '
   return (
     <div
       aria-hidden="true"
-      className={`${className} flex shrink-0 items-center justify-center ${rounded} text-white/80`}
-      style={{ background: `linear-gradient(135deg, hsl(${hue1} 70% 45%), hsl(${hue2} 70% 30%))` }}
+      className={`${className} flex shrink-0 items-center justify-center ${rounded} text-white/85`}
+      style={{ background: `linear-gradient(135deg, hsl(${hue1} 45% 38%), hsl(${hue2} 40% 24%))` }}
     >
       <Music size={iconSize} />
     </div>

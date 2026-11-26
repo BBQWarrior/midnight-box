@@ -59,14 +59,14 @@ function inline(text: string): ReactNode[] {
       out.push(<strong key={key++}>{inline(m[1])}</strong>);
     } else if (m[2] !== undefined) {
       out.push(
-        <code key={key++} className="rounded bg-white/10 px-1 py-0.5 text-[0.9em]">
+        <code key={key++} className="rounded bg-raised px-1 py-0.5 text-[0.9em]">
           {m[2]}
         </code>,
       );
     } else if (m[3] !== undefined && m[4] !== undefined) {
       if (/^https?:\/\//i.test(m[4])) {
         out.push(
-          <a key={key++} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-glow underline underline-offset-2">
+          <a key={key++} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2">
             {m[3]}
           </a>,
         );
@@ -89,21 +89,21 @@ export function PrivacyPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
-      <a href="/" className="inline-flex min-h-11 items-center text-sm text-white/70 underline underline-offset-2">
+      <a href="/" className="inline-flex min-h-11 items-center text-sm text-muted underline underline-offset-2">
         ← Back to Midnight Box
       </a>
-      <main className="mt-2 text-base leading-relaxed text-white/85">
+      <main className="mt-2 text-base leading-relaxed text-ink/90">
         {blocks.map((b, i) => {
           switch (b.kind) {
             case 'h1':
               return (
-                <h1 key={i} className="mb-4 text-2xl font-bold text-white">
+                <h1 key={i} className="mb-4 text-2xl font-bold tracking-tight text-ink">
                   {inline(b.text)}
                 </h1>
               );
             case 'h2':
               return (
-                <h2 key={i} className="mb-2 mt-8 text-lg font-semibold text-white">
+                <h2 key={i} className="mb-2 mt-8 text-lg font-semibold text-ink">
                   {inline(b.text)}
                 </h2>
               );

@@ -114,6 +114,9 @@ async function main() {
     await page.getByText('Vote for the next song').waitFor();
     await page.getByRole('button', { name: `Vote for ${round.candidates[0].track.name}` }).click();
     await page.getByText('3 votes').waitFor();
+    await page.locator('button[aria-pressed="true"]:not([disabled])').waitFor();
+    // Let the button's colour transition finish.
+    await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, 'vote.png') });
 
     // A small party: fair-queue order will be Maya, Leo, Priya, Maya, Leo.
@@ -151,15 +154,31 @@ async function main() {
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, 'search.png') });
 
-    // Host panel, logged in.
+    // Host panel, logged in: the queue with one song's actions open, the house rules and the blacklist.
     await host.request.post(`${BASE}/api/admin/vote`, { data: { enabled: true } });
+    await host.request.put(`${BASE}/api/admin/settings`, { data: { artistMaxSongs: 2, artistCooldownMinutes: 30 } });
+    for (const [kind, query] of [['artist', 'insomnia disco'], ['album', 'crocodile arcade'], ['song', 'route 42']]) {
+      const res = await host.request.post(`${BASE}/api/admin/blacklist`, { data: { kind, trackId: await trackId(maya, query) } });
+      if (!res.ok()) throw new Error(`Blocking failed: ${await res.text()}`);
+    }
     const admin = await host.newPage();
-    await admin.goto(`${BASE}/admin`);
+    await admin.goto(`${BASE}/admin#queue`);
     await admin.getByText('Gravity Waltz').first().waitFor();
-    // Skip past playback and the QR code to the queue, guest and cooldown controls.
-    await admin.getByRole('heading', { name: 'Queue' }).evaluate((el) => el.scrollIntoView({ block: 'start' }));
-    await admin.waitForTimeout(500);
+    await admin.getByRole('button', { name: 'Actions for North of Never' }).click();
+    await admin.getByRole('button', { name: /Block…/ }).click();
+    await admin.waitForTimeout(400);
     await admin.screenshot({ path: path.join(OUT_DIR, 'host.png') });
+
+    await admin.goto(`${BASE}/admin#rules`);
+    await admin.getByText('Guest requests').waitFor();
+    await admin.waitForTimeout(400);
+    await admin.screenshot({ path: path.join(OUT_DIR, 'rules.png') });
+
+    await admin.goto(`${BASE}/admin#blacklist`);
+    await admin.getByText('Never played').waitFor();
+    await admin.getByText('Route 42').waitFor();
+    await admin.waitForTimeout(400);
+    await admin.screenshot({ path: path.join(OUT_DIR, 'blacklist.png') });
 
     console.log(`Screenshots saved to ${path.relative(ROOT, OUT_DIR)}`);
   } finally {

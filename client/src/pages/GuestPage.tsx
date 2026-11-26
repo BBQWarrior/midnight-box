@@ -13,15 +13,24 @@ import { QueueList } from '../components/QueueList';
 import { VoteCard } from '../components/VoteCard';
 import { SearchPanel } from '../components/SearchPanel';
 import { SpotifyLogo } from '../components/Spotify';
+import { Centered, Notice, Tabs, Wordmark } from '../components/ui';
 
 type Tab = 'queue' | 'add';
 
-function rulesText(l: Limits): string {
+/** The house rules in one line: "Up to 2 songs every 20 min · 3 waiting at once · songs rest 2 h, artists 20 min". */
+export function rulesText(l: Limits): string {
   const parts = [`Up to ${l.windowSongs} songs every ${l.windowMinutes} min`, `${l.maxPendingPerGuest} waiting at once`];
   const rest: string[] = [];
   if (l.songCooldownMinutes > 0) rest.push(`songs rest ${formatMinutes(l.songCooldownMinutes)}`);
-  if (l.artistCooldownMinutes > 0) rest.push(`artists ${formatMinutes(l.artistCooldownMinutes)}`);
+  if (l.artistCooldownMinutes > 0) {
+    rest.push(
+      l.artistMaxSongs > 1
+        ? `${l.artistMaxSongs} per artist every ${formatMinutes(l.artistCooldownMinutes)}`
+        : `artists ${formatMinutes(l.artistCooldownMinutes)}`,
+    );
+  }
   if (rest.length > 0) parts.push(rest.join(', '));
+  if (l.noExplicit) parts.push('no explicit songs');
   return parts.join(' · ');
 }
 
@@ -38,17 +47,17 @@ export function GuestPage() {
 
   if (banned) {
     return (
-      <div className="flex min-h-dvh items-center justify-center p-6">
-        <p role="alert" className="max-w-sm text-center text-lg text-white/80">
+      <Centered>
+        <p role="alert" className="max-w-sm text-center text-lg text-muted">
           The host removed you from this party.
         </p>
-      </div>
+      </Centered>
     );
   }
 
   if (!me || !state) {
     return (
-      <p role="status" className="p-10 text-center text-white/60">
+      <p role="status" className="p-10 text-center text-muted">
         Loading…
       </p>
     );
@@ -57,11 +66,6 @@ export function GuestPage() {
   if (me.name === null) {
     return <NameCard onSubmit={setName} />;
   }
-
-  const tabClass = (t: Tab): string =>
-    `min-h-11 flex-1 rounded-full text-sm font-semibold transition-colors ${
-      tab === t ? 'bg-linear-to-r from-accent to-accent-2 text-white' : 'text-white/70'
-    }`;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 px-4 pt-4">
@@ -77,22 +81,13 @@ export function GuestPage() {
       )}
 
       <header className="flex items-center justify-between gap-2">
-        <div>
-          <h1 className="bg-linear-to-r from-violet-300 to-cyan-200 bg-clip-text text-xl font-bold text-transparent">
-            Midnight Box
-          </h1>
-          {state.demoMode && (
-            <span className="mt-0.5 inline-block rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
-              Demo mode, fake songs
-            </span>
-          )}
+        <div className="flex min-w-0 flex-col items-start gap-1">
+          <Wordmark />
+          {state.demoMode && <span className="text-xs text-faint">Demo mode, fake songs</span>}
         </div>
         <div className="flex items-center gap-2">
           {!connected && (
-            <span
-              role="status"
-              className="flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2.5 py-1 text-xs text-amber-200"
-            >
+            <span role="status" className="flex items-center gap-1 text-xs text-muted">
               <WifiOff size={12} aria-hidden="true" /> Reconnecting…
             </span>
           )}
@@ -100,22 +95,18 @@ export function GuestPage() {
             type="button"
             onClick={() => setEditingName(true)}
             aria-label={`Change your name, currently ${me.name}`}
-            className="flex min-h-11 max-w-36 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-sm"
+            className="flex min-h-11 max-w-36 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold hover:border-faint/60"
           >
             <span className="truncate">{me.name}</span>
-            <Pencil size={12} aria-hidden="true" className="shrink-0 text-white/50" />
+            <Pencil size={12} aria-hidden="true" className="shrink-0 text-faint" />
           </button>
         </div>
       </header>
 
-      {!state.providerReady && (
-        <div role="status" className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-          Waiting for the host to connect Spotify
-        </div>
-      )}
+      {!state.providerReady && <Notice role="status">Waiting for the host to connect Spotify</Notice>}
 
       {!state.demoMode && (
-        <div className="-mb-3 -mt-3 -ml-3">
+        <div className="-my-3 -ml-3">
           <SpotifyLogo />
         </div>
       )}
@@ -131,16 +122,17 @@ export function GuestPage() {
         }
       />
 
-      <div role="tablist" aria-label="Sections" className="flex gap-1 rounded-full border border-white/10 bg-white/5 p-1 backdrop-blur-xl">
-        <button type="button" role="tab" aria-selected={tab === 'queue'} onClick={() => setTab('queue')} className={tabClass('queue')}>
-          Up next{state.queue.length > 0 ? ` (${state.queue.length})` : ''}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === 'add'} onClick={() => setTab('add')} className={tabClass('add')}>
-          Add songs
-        </button>
-      </div>
+      <Tabs
+        label="Sections"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'queue', label: `Up next${state.queue.length > 0 ? ` (${state.queue.length})` : ''}` },
+          { id: 'add', label: 'Add songs' },
+        ]}
+      />
 
-      <p className="px-1 text-xs text-white/50">{rulesText(state.limits)}</p>
+      <p className="-mt-1 px-1 text-[13px] text-faint">{rulesText(state.limits)}</p>
 
       <main className="pb-8">
         <div hidden={tab !== 'queue'}>
@@ -160,7 +152,7 @@ export function GuestPage() {
         </div>
       </main>
 
-      <footer className="pb-6 text-center text-xs text-white/40">
+      <footer className="pb-6 text-center text-xs text-faint">
         <a href="/privacy" className="inline-flex min-h-11 items-center underline underline-offset-2">
           Privacy
         </a>

@@ -5,6 +5,7 @@ import { ApiRequestError, api, errorMessage, isAbort } from '../lib/api';
 import { useSecondsLeft } from '../hooks/useSecondsLeft';
 import { CoverLink } from './Spotify';
 import { useToast } from './Toast';
+import { Card, Heading } from './ui';
 
 interface Props {
   vote: VoteState;
@@ -74,38 +75,52 @@ export function VoteCard({ vote, skewMs, onForbidden, spotify = false }: Props) 
   if (!vote.active) return null;
 
   if (!round) {
-    return <p className="mb-3 px-1 text-xs text-white/50">The next vote starts when the queue runs low.</p>;
+    return <p className="mb-3 px-1 text-[13px] text-faint">The next vote starts when the queue runs low.</p>;
   }
 
+  const total = round.candidates.reduce((sum, c) => sum + c.votes, 0);
+
   return (
-    <section aria-label="Vote for the next song" className="mb-3 rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="font-semibold">Vote for the next song</h2>
-          <p className="truncate text-xs text-white/60">
+    <Card label="Vote for the next song" className="mb-3 p-4">
+      <Heading
+        title="Vote for the next song"
+        description={
+          <span className="block truncate">
             Related to {round.basedOn.name} by {round.basedOn.artist}
-          </p>
-        </div>
-        <span
-          role="timer"
-          aria-label={`${secondsLeft} seconds left`}
-          className="shrink-0 rounded-full border border-glow/30 bg-glow/15 px-2.5 py-1 text-xs font-semibold tabular-nums text-cyan-200"
-        >
-          {secondsLeft}s
-        </span>
-      </div>
-      <ul className="mt-3 flex flex-col gap-2">
+          </span>
+        }
+        actions={
+          <span
+            role="timer"
+            aria-label={`${secondsLeft} seconds left`}
+            className="rounded-md bg-accent-soft px-2 py-1 text-xs font-bold text-accent tabular-nums"
+          >
+            {secondsLeft}s
+          </span>
+        }
+      />
+      <ul className="mt-3 flex flex-col gap-3">
         {round.candidates.map((c) => {
           const picked = mine.includes(c.track.id);
+          const share = total > 0 ? (c.votes / total) * 100 : 0;
           return (
             <li key={c.track.id} className="flex items-center gap-3">
               <CoverLink track={c.track} spotify={spotify} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium" title={c.track.name}>{c.track.name}</p>
-                <p className="truncate text-xs text-white/60" title={c.track.artists[0]?.name}>{c.track.artists[0]?.name}</p>
-                <p className="text-xs tabular-nums text-white/50">
-                  {c.votes} {c.votes === 1 ? 'vote' : 'votes'}
+                <p className="truncate text-sm font-semibold" title={c.track.name}>
+                  {c.track.name}
                 </p>
+                <p className="truncate text-[13px] text-muted" title={c.track.artists[0]?.name}>
+                  {c.track.artists[0]?.name}
+                </p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-line">
+                    <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${share}%` }} />
+                  </div>
+                  <span className="w-12 shrink-0 text-right text-xs text-faint tabular-nums">
+                    {c.votes} {c.votes === 1 ? 'vote' : 'votes'}
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
@@ -113,10 +128,8 @@ export function VoteCard({ vote, skewMs, onForbidden, spotify = false }: Props) 
                 aria-label={`${picked ? 'Take back vote for' : 'Vote for'} ${c.track.name}`}
                 disabled={busy.has(c.track.id) || secondsLeft === 0}
                 onClick={() => void toggle(c.track.id)}
-                className={`flex size-12 shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-60 ${
-                  picked
-                    ? 'border-transparent bg-linear-to-r from-accent to-accent-2 text-white'
-                    : 'border-white/20 bg-white/5 text-white/80'
+                className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-60 ${
+                  picked ? 'border-accent bg-accent text-accent-ink' : 'border-line bg-raised text-ink hover:border-faint/60'
                 }`}
               >
                 {picked ? <Check size={20} aria-hidden="true" /> : <Plus size={20} aria-hidden="true" />}
@@ -125,7 +138,7 @@ export function VoteCard({ vote, skewMs, onForbidden, spotify = false }: Props) 
           );
         })}
       </ul>
-      <p className="mt-3 text-xs text-white/50">Vote for as many as you like. Votes don&apos;t use up your song requests.</p>
-    </section>
+      <p className="mt-3 text-xs text-faint">Vote for as many as you like. Votes don&apos;t use up your song requests.</p>
+    </Card>
   );
 }

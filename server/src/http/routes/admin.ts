@@ -1,11 +1,12 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import type { AdminStatus, CooldownList, Device, HostSession } from '@shared/types';
+import type { AdminStatus, BanResult, CooldownList, Device, HostSession } from '@shared/types';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, SESSION_TTL_MS } from '../../services/host-auth.js';
 import { voterKey } from '../../services/guests.js';
 import { HttpError } from '../errors.js';
 import { clientIp, HOST_COOKIE, isHostRequest, makeRequireAdmin, requireHost } from '../security.js';
 import type { AppDeps } from '../app.js';
+import { registerHouseRuleRoutes } from './house-rules.js';
 
 const SetupBody = z.object({
   password: z
@@ -23,7 +24,7 @@ const ClearBody = z.object({ kind: z.enum(['song', 'artist']), key: z.string().m
 
 /** Host panel: password setup and login, then playback, queue, cooldown and guest controls. */
 export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns, votes, skips } = deps;
+  const { provider, player, queue, hub, config, guests, hostAuth, cooldowns, votes, skips, settings, deviceBans } = deps;
   const opts = {
     preHandler: makeRequireAdmin(hostAuth),
     config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
@@ -104,7 +105,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
         provider.kind === 'spotify' && !connected ? `http://127.0.0.1:${config.port}/auth/spotify/login` : null,
       onHostMachine: isHostRequest(req),
       devices,
-      banned: guests.bannedList(),
+      banned: (() => {
+        const devices = deviceBans.bannedGuests();
+        return guests.bannedList().map((g) => ({ ...g, device: devices.has(g.publicId) }));
+      })(),
       voting: votes.status(),
     };
   });
@@ -150,7 +154,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.post('/api/admin/vote', opts, async (req, reply) => {
     const { enabled } = VotingBody.parse(req.body);
-    votes.setEnabled(enabled);
+    settings.update({ voteEnabled: enabled });
     req.log.info(`Vote rounds turned ${enabled ? 'on' : 'off'}`);
     return reply.status(204).send();
   });
@@ -164,29 +168,40 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.post('/api/admin/skip-voting', opts, async (req, reply) => {
     const { enabled } = VotingBody.parse(req.body);
-    skips.setEnabled(enabled);
+    settings.update({ skipEnabled: enabled });
     req.log.info(`Vote to skip turned ${enabled ? 'on' : 'off'}`);
     return reply.status(204).send();
   });
 
   // ---- Guests --------------------------------------------------------------
 
-  app.post('/api/admin/guests/:publicId/ban', opts, async (req, reply) => {
+  // Bans the guest's session and address, and their phone itself when its hardware address can be read.
+  app.post('/api/admin/guests/:publicId/ban', opts, async (req): Promise<BanResult> => {
     const { publicId } = GuestParams.parse(req.params);
+    const ip = (() => {
+      const g = guests.find(publicId);
+      return g ? guests.ipOf(g.id) : undefined;
+    })();
     const guest = guests.ban(publicId);
     if (!guest) throw new HttpError(404, 'not_found', 'No guest with that id.');
+    const device = await deviceBans.ban(ip, publicId);
     const removed = queue.removeQueuedFor(guest.id);
-    const voters = [voterKey(guest.id, guests.ipOf(guest.id)), voterKey(guest.id, undefined)];
+    const voters = [voterKey(guest.id, ip), voterKey(guest.id, undefined)];
     votes.removeVoter(...voters);
     skips.removeVoter(...voters);
-    req.log.info(`Host removed ${guest.name ?? 'a guest'} from the party (${removed} queued songs dropped)`);
+    req.log.info(
+      `Host removed ${guest.name ?? 'a guest'} from the party (${removed} queued songs dropped${device ? ', phone banned' : ''})`,
+    );
     hub.broadcast();
-    return reply.status(204).send();
+    return { device };
   });
 
   app.delete('/api/admin/guests/:publicId/ban', opts, async (req, reply) => {
     const { publicId } = GuestParams.parse(req.params);
     if (!guests.unban(publicId)) throw new HttpError(404, 'not_found', 'No guest with that id.');
+    deviceBans.unban(publicId);
     return reply.status(204).send();
   });
+
+  registerHouseRuleRoutes(app, deps, opts);
 }
